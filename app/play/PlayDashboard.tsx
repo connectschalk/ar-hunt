@@ -3,8 +3,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/app/components/AuthProvider";
+import {
+  DashboardActionGrid,
+  type DashboardModalId,
+} from "@/app/components/DashboardActionGrid";
 import { PlayerBag } from "@/app/components/PlayerBag";
 import { SurvivorHeaderLogo } from "@/app/components/SurvivorHeaderLogo";
+import { SurvivorModal } from "@/app/components/SurvivorModal";
 import { SurvivorNav } from "@/app/components/SurvivorNav";
 import { TribeChallengeCard } from "@/app/components/TribeChallengeCard";
 import { bagEntryFromQuickExploreFind } from "@/lib/map-marker-icons";
@@ -22,7 +27,6 @@ import {
   statPill,
   statPillLabel,
   survivorPageBg,
-  tribalPanel,
   tribalPanelInner,
 } from "@/lib/survivor-ui";
 import {
@@ -51,6 +55,13 @@ function StatPill({ label, value }: { label: string; value: number }) {
   );
 }
 
+const MODAL_TITLES: Record<DashboardModalId, string> = {
+  progress: "Player Progress",
+  status: "Survivor Status",
+  bag: "Bag Inventory",
+  achievements: "Achievements",
+};
+
 export function PlayDashboard() {
   const { user: authUser, loading: authLoading } = useAuth();
   const [game, setGame] = useState<GameState>(DEFAULT_GAME_STATE);
@@ -58,6 +69,7 @@ export function PlayDashboard() {
   const [tribeName, setTribeName] = useState<string | null>(null);
   const [lastFind, setLastFind] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<CloudSaveUiStatus>("local");
+  const [modal, setModal] = useState<DashboardModalId | null>(null);
 
   useEffect(() => subscribeCloudSaveStatus(setCloudStatus), []);
 
@@ -119,7 +131,7 @@ export function PlayDashboard() {
 
   return (
     <div className={survivorPageBg}>
-      <SurvivorHeaderLogo subtitle="Island dashboard" />
+      <SurvivorHeaderLogo subtitle="Island Dashboard" />
       {hydrated && !authLoading && (
         <p
           className="px-4 pt-2 text-center text-xs font-medium text-teal-400/85"
@@ -135,96 +147,9 @@ export function PlayDashboard() {
       )}
 
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 px-4 py-6 pb-28">
-        <section className={`${tribalPanel} p-5`} aria-label="Player progress">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-amber-200/95">
-            Player progress
-          </h2>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <StatPill label="Level" value={game.level} />
-            <StatPill label="Total XP" value={game.xp} />
-          </div>
-          <div className="mt-4">
-            <div className="flex justify-between text-xs text-[#f5f0e6]/75">
-              <span>Next level</span>
-              <span className="tabular-nums">
-                {xpProgressPct} / 100 XP this level
-              </span>
-            </div>
-            <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-black/60 ring-1 ring-teal-500/25">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-cyan-600 to-teal-400"
-                style={{ width: `${xpProgressPct}%` }}
-              />
-            </div>
-          </div>
-          <p className="mt-4 text-sm text-teal-200/80">
-            Daily streak:{" "}
-            <span className="font-semibold text-amber-200 tabular-nums">
-              {game.dailyStreak}
-            </span>{" "}
-            {game.dailyStreak === 1 ? "day" : "days"}
-          </p>
-          <p className="mt-2 text-sm text-teal-200/70">
-            Achievements:{" "}
-            <span className="font-semibold text-[#f5f0e6] tabular-nums">
-              {achievementsUnlocked}
-            </span>
-            <span className="text-teal-500/80">
-              {" "}
-              / {achievementRows.length}
-            </span>
-          </p>
-        </section>
+        <DashboardActionGrid onOpen={setModal} />
 
-        <section className={`${tribalPanel} p-5`} aria-label="Player status">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-amber-200/95">
-            Survivor status
-          </h2>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <StatPill label="Energy" value={game.energy} />
-            <StatPill label="Food" value={game.food} />
-            <StatPill label="Water" value={game.water} />
-            <StatPill label="Materials" value={game.materials} />
-            <StatPill label="Survivor Coins" value={game.coins} />
-            <StatPill label="Hidden Immunity Idols" value={game.idols} />
-            <StatPill label="Advantage Clues" value={game.clues} />
-          </div>
-        </section>
-
-        <section className={`${tribalPanelInner} p-5`} aria-label="Player bag">
-          <h2 className="text-lg font-semibold text-amber-100/95">Bag</h2>
-          <p className="mt-1 text-sm text-teal-200/55">
-            Items you&apos;ve picked up — tap markers on the map or use Quick
-            Explore.
-          </p>
-          <PlayerBag items={game.bag} />
-        </section>
-
-        <section className={`${tribalPanelInner} p-5`}>
-          <h2 className="text-lg font-semibold text-amber-100/95">
-            Achievements
-          </h2>
-          <ul className="mt-3 space-y-2">
-            {achievementRows.map((a) => (
-              <li
-                key={a.id}
-                className={`rounded-xl border px-3 py-2 text-xs leading-snug sm:text-sm ${
-                  a.unlocked
-                    ? "border-amber-500/35 bg-amber-950/25 text-[#f5f0e6]"
-                    : "border-white/10 bg-black/30 text-zinc-500"
-                }`}
-              >
-                <span className="font-semibold">{a.title}</span>
-                <span className={a.unlocked ? "text-teal-200/70" : ""}>
-                  {" "}
-                  — {a.description}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className={`${tribalPanelInner} p-5`}>
+        <section className={`${tribalPanelInner} p-5`} aria-label="Explore">
           <Link
             href="/map"
             className={`flex w-full items-center justify-center ${btnPrimary}`}
@@ -266,7 +191,7 @@ export function PlayDashboard() {
           </button>
         </section>
 
-        <section className={`${tribalPanelInner} p-5`}>
+        <section className={`${tribalPanelInner} p-5`} aria-label="Tribe">
           <h2 className="text-lg font-semibold text-amber-100/95">Tribe</h2>
           {tribeName ? (
             <p className="mt-2 text-sm text-[#f5f0e6]/80">
@@ -290,6 +215,101 @@ export function PlayDashboard() {
 
         <TribeChallengeCard onGameSynced={syncGameFromStorage} />
       </main>
+
+      <SurvivorModal
+        open={modal !== null}
+        onClose={() => setModal(null)}
+        title={modal !== null ? MODAL_TITLES[modal] : "Survivor GO"}
+      >
+        {modal === "progress" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <StatPill label="Level" value={game.level} />
+              <StatPill label="Total XP" value={game.xp} />
+            </div>
+            <div>
+              <div className="flex justify-between text-xs text-[#f5f0e6]/75">
+                <span>Next level</span>
+                <span className="tabular-nums">
+                  {xpProgressPct} / 100 XP this level
+                </span>
+              </div>
+              <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-black/60 ring-1 ring-teal-500/25">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-600 to-teal-400"
+                  style={{ width: `${xpProgressPct}%` }}
+                />
+              </div>
+            </div>
+            <p className="text-sm text-teal-200/80">
+              Daily streak:{" "}
+              <span className="font-semibold text-amber-200 tabular-nums">
+                {game.dailyStreak}
+              </span>{" "}
+              {game.dailyStreak === 1 ? "day" : "days"}
+            </p>
+            <p className="text-sm text-teal-200/70">
+              Achievements unlocked:{" "}
+              <span className="font-semibold text-[#f5f0e6] tabular-nums">
+                {achievementsUnlocked}
+              </span>
+              <span className="text-teal-500/80">
+                {" "}
+                / {achievementRows.length}
+              </span>
+            </p>
+          </div>
+        )}
+
+        {modal === "status" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <StatPill label="Energy" value={game.energy} />
+              <StatPill label="Food" value={game.food} />
+              <StatPill label="Water" value={game.water} />
+              <StatPill label="Materials" value={game.materials} />
+              <StatPill label="Survivor Coins" value={game.coins} />
+              <StatPill label="Hidden Immunity Idols" value={game.idols} />
+              <StatPill label="Advantage Clues" value={game.clues} />
+            </div>
+            {!authLoading && authUser && (
+              <p className="rounded-xl border border-teal-700/40 bg-black/40 px-3 py-2 text-xs text-teal-200/85">
+                Cloud save: {cloudLine}
+              </p>
+            )}
+          </div>
+        )}
+
+        {modal === "bag" && (
+          <div>
+            <p className="mb-3 text-xs text-teal-200/55">
+              Items from the map or Quick Explore.
+            </p>
+            <PlayerBag items={game.bag} />
+          </div>
+        )}
+
+        {modal === "achievements" && (
+          <ul className="space-y-2">
+            {achievementRows.map((a) => (
+              <li
+                key={a.id}
+                className={`rounded-xl border px-3 py-2 text-xs leading-snug sm:text-sm ${
+                  a.unlocked
+                    ? "border-amber-500/35 bg-amber-950/25 text-[#f5f0e6]"
+                    : "border-white/10 bg-black/30 text-zinc-500"
+                }`}
+              >
+                <span className="font-semibold">{a.title}</span>
+                <span className={a.unlocked ? "text-teal-200/70" : ""}>
+                  {" "}
+                  — {a.description}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SurvivorModal>
 
       <div className="fixed bottom-0 left-0 right-0 z-10">
         <SurvivorNav />
