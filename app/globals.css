@@ -63,3 +63,10 @@ body {
   filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.95))
     drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
 }
+
+/* Selected map loot marker — compass target */
+.map-item-marker--target.leaflet-marker-icon,
+.leaflet-marker-icon.map-item-marker--target {
+  filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.95))
+    drop-shadow(0 0 4px rgba(20, 184, 166, 0.65));
+}

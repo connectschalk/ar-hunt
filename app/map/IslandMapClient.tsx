@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CircleMarker as LeafletCircleMarker,
   Map as LeafletMap,
@@ -26,8 +27,13 @@ import {
   type MapItem,
 } from "@/lib/map-items";
 import {
+  calculateBearing,
+  getClosestItem,
+} from "@/lib/map-geo";
+import {
   formatMapCollectToastWithXp,
   applyMapCollectProgression,
+  xpIntoCurrentLevel,
 } from "@/lib/player-progression";
 import {
   DEFAULT_GAME_STATE,
@@ -35,7 +41,8 @@ import {
   saveGameState,
   type GameState,
 } from "@/lib/survivor-mvp";
-import { btnPrimary, btnPrimarySm, btnSecondarySm } from "@/lib/survivor-ui";
+import { btnPrimarySm, btnSecondarySm } from "@/lib/survivor-ui";
+import { useDeviceHeading } from "@/app/map/useDeviceHeading";
 
 function randomSpawnCount(): number {
   return 5 + Math.floor(Math.random() * 6);
@@ -70,6 +77,26 @@ function searchNewArea(
   });
 }
 
+function buildItemPopupHtml(
+  item: MapItem,
+  distM: number | null,
+  isSelected: boolean,
+): string {
+  const capRarity =
+    item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1);
+  const distLine =
+    distM != null ? `${distM} m away` : "Distance: —";
+  const sel =
+    isSelected &&
+    `<span style="display:block;margin-top:8px;color:#fcd34d;font-size:11px;font-weight:600;letter-spacing:.02em">Selected target</span>`;
+  return `<div style="font-size:13px;line-height:1.45;min-width:140px">
+            <strong>${item.variant}</strong><br/>
+            <span style="opacity:.85">${capRarity}</span><br/>
+            <span style="opacity:.9">${distLine}</span>
+            ${sel || ""}
+          </div>`;
+}
+
 export function IslandMapClient() {
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(
     null,
@@ -80,6 +107,17 @@ export function IslandMapClient() {
   const [toast, setToast] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapItemsLoading, setMapItemsLoading] = useState(true);
+  const [manualCompassTargetId, setManualCompassTargetId] = useState<
+    string | null
+  >(null);
+  const [compassHudVisible, setCompassHudVisible] = useState(true);
+
+  const {
+    headingDeg,
+    permission,
+    requestCompassPermission,
+    headingAvailable,
+  } = useDeviceHeading();
 
   const mapDivRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -87,7 +125,6 @@ export function IslandMapClient() {
   const itemsForMapRef = useRef<MapItem[]>([]);
   const userPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const collectHandlerRef = useRef<(item: MapItem) => void>(() => {});
-  /** Ensures initial spawn / load runs only once when position is first ready */
   const hasSpawnedInitialItemsRef = useRef(false);
   const playerMarkerRef = useRef<LeafletCircleMarker | null>(null);
 
@@ -151,6 +188,59 @@ export function IslandMapClient() {
     setMapItemsLoading(false);
   }, [userPos]);
 
+  useEffect(() => {
+    if (
+      manualCompassTargetId &&
+      !items.some((i) => i.id === manualCompassTargetId)
+    ) {
+      setManualCompassTargetId(null);
+    }
+  }, [items, manualCompassTargetId]);
+
+  const compassTargetItem = useMemo(() => {
+    if (!userPos || items.length === 0) return null;
+    if (manualCompassTargetId) {
+      const found = items.find((i) => i.id === manualCompassTargetId);
+      if (found) return found;
+    }
+    return getClosestItem(userPos, items);
+  }, [userPos, items, manualCompassTargetId]);
+
+  const compassLabel = useMemo(() => {
+    if (!compassTargetItem || !userPos) return "No items to track.";
+    const dist = Math.round(
+      haversineMeters(
+        userPos.lat,
+        userPos.lng,
+        compassTargetItem.lat,
+        compassTargetItem.lng,
+      ),
+    );
+    const manualActive =
+      manualCompassTargetId != null &&
+      items.some((i) => i.id === manualCompassTargetId) &&
+      compassTargetItem.id === manualCompassTargetId;
+    const prefix = manualActive ? "Target" : "Nearest item";
+    return `${prefix}: ${compassTargetItem.variant} · ${dist}m`;
+  }, [
+    compassTargetItem,
+    userPos,
+    manualCompassTargetId,
+    items,
+  ]);
+
+  const bearingDeg = useMemo(() => {
+    if (!userPos || !compassTargetItem) return 0;
+    return calculateBearing(
+      userPos.lat,
+      userPos.lng,
+      compassTargetItem.lat,
+      compassTargetItem.lng,
+    );
+  }, [userPos, compassTargetItem]);
+
+  const baseRotation = headingDeg != null ? -headingDeg : 0;
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 3200);
@@ -210,6 +300,7 @@ export function IslandMapClient() {
     const pos = userPosRef.current;
     if (!pos) return;
     searchNewArea(pos, setItems);
+    setManualCompassTargetId(null);
     showToast("Searching a new area…");
   }, [showToast]);
 
@@ -231,7 +322,17 @@ export function IslandMapClient() {
   const showDevSpawn =
     typeof process !== "undefined" && process.env.NODE_ENV === "development";
 
-  /** Create Leaflet map once when we first have a position — never tear down on GPS updates */
+  const centerMapOnPlayer = useCallback(() => {
+    const map = mapRef.current;
+    const pos = userPosRef.current;
+    if (!map || !pos) return;
+    map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 16));
+  }, []);
+
+  const onFilterPlaceholder = useCallback(() => {
+    showToast("Map filters coming soon.");
+  }, [showToast]);
+
   useEffect(() => {
     if (!userPos || mapRef.current || !mapDivRef.current) return;
 
@@ -275,7 +376,6 @@ export function IslandMapClient() {
     };
   }, [userPos]);
 
-  /** Follow player on GPS updates without recreating the map */
   useEffect(() => {
     if (!userPos || !playerMarkerRef.current) return;
     playerMarkerRef.current.setLatLng([userPos.lat, userPos.lng]);
@@ -293,7 +393,6 @@ export function IslandMapClient() {
     };
   }, []);
 
-  /** Sync loot markers only when item list or map readiness changes — not on every GPS tick */
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
@@ -312,11 +411,12 @@ export function IslandMapClient() {
 
       list.forEach((item) => {
         const layout = mapItemIconLayout(item.rarity);
+        const isSel = item.id === manualCompassTargetId;
         const m = L.marker([item.lat, item.lng], {
           icon: L.icon({
             iconUrl: getMapItemIconSrc(item),
             ...layout,
-            className: "map-item-marker-icon",
+            className: `map-item-marker-icon${isSel ? " map-item-marker--target" : ""}`,
           }),
         }).addTo(map);
 
@@ -324,21 +424,15 @@ export function IslandMapClient() {
           pos != null
             ? Math.round(haversineMeters(pos.lat, pos.lng, item.lat, item.lng))
             : null;
-        const distLine =
-          distM != null ? `${distM} m away` : "Distance: —";
-        const capRarity =
-          item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1);
+
         m.bindPopup(
-          `<div style="font-size:13px;line-height:1.45;min-width:140px">
-            <strong>${item.variant}</strong><br/>
-            <span style="opacity:.85">${capRarity}</span><br/>
-            <span style="opacity:.9">${distLine}</span>
-          </div>`,
+          buildItemPopupHtml(item, distM, isSel),
           { maxWidth: 260 },
         );
 
         m.on("click", (ev) => {
           L.DomEvent.stopPropagation(ev);
+          setManualCompassTargetId(item.id);
           collectHandlerRef.current(item);
         });
 
@@ -349,9 +443,8 @@ export function IslandMapClient() {
     return () => {
       cancelled = true;
     };
-  }, [items, mapReady]);
+  }, [items, mapReady, manualCompassTargetId]);
 
-  /** Update popup distances when player moves — markers stay mounted */
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
@@ -364,21 +457,18 @@ export function IslandMapClient() {
         const distM = Math.round(
           haversineMeters(pos.lat, pos.lng, item.lat, item.lng),
         );
-        const capRarity =
-          item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1);
-        m.setPopupContent(
-          `<div style="font-size:13px;line-height:1.45;min-width:140px">
-            <strong>${item.variant}</strong><br/>
-            <span style="opacity:.85">${capRarity}</span><br/>
-            <span style="opacity:.9">${distM} m away</span>
-          </div>`,
-        );
+        const isSel = item.id === manualCompassTargetId;
+        m.setPopupContent(buildItemPopupHtml(item, distM, isSel));
       });
     });
-  }, [userPos, mapReady, items]);
+  }, [userPos, mapReady, items, manualCompassTargetId]);
+
+  const xpPct = xpIntoCurrentLevel(game.xp);
 
   const allCollected =
     !mapItemsLoading && items.length === 0 && Boolean(userPos);
+
+  const toastBottomClass = compassHudVisible ? "bottom-52" : "bottom-24";
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#1a120d]">
@@ -387,66 +477,72 @@ export function IslandMapClient() {
         className="treasure-map-leaflet absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/50 [&_.leaflet-control-attribution]:text-zinc-400 [&_.leaflet-marker-pane_img]:drop-shadow-[0_3px_14px_rgba(0,0,0,0.75)] [&_.map-item-marker-icon]:drop-shadow-[0_3px_14px_rgba(0,0,0,0.72)] [&_.map-item-marker-icon]:contrast-[1.08]"
       />
 
-      {/* Decorative compass — visual only; sits above map frame, below HUD */}
-      <div
-        className="pointer-events-none absolute bottom-20 right-3 z-[999] h-14 w-14 opacity-[0.78] sm:bottom-7 sm:right-4 sm:h-16 sm:w-16"
-        aria-hidden
-      >
-        <svg viewBox="0 0 64 64" className="h-full w-full text-amber-200/90 drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
-          <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.85" />
-          <circle cx="32" cy="32" r="26" fill="rgba(20,12,8,0.35)" stroke="currentColor" strokeWidth="0.75" opacity="0.6" />
-          <text x="32" y="15" textAnchor="middle" fill="currentColor" fontSize="11" fontWeight="700" fontFamily="Georgia, serif">
-            N
-          </text>
-          <text x="51" y="37" textAnchor="middle" fill="currentColor" fontSize="10" fontFamily="Georgia, serif">
-            E
-          </text>
-          <text x="32" y="55" textAnchor="middle" fill="currentColor" fontSize="10" fontFamily="Georgia, serif">
-            S
-          </text>
-          <text x="13" y="37" textAnchor="middle" fill="currentColor" fontSize="10" fontFamily="Georgia, serif">
-            W
-          </text>
-          <path
-            d="M32 12 L36 32 L32 28 L28 32 Z"
-            fill="rgba(251,191,36,0.95)"
-            stroke="rgba(62,38,18,0.9)"
-            strokeWidth="0.5"
-          />
-          <path
-            d="M32 52 L36 32 L32 36 L28 32 Z"
-            fill="rgba(71,85,105,0.85)"
-            stroke="rgba(62,38,18,0.85)"
-            strokeWidth="0.5"
-          />
-          <circle cx="32" cy="32" r="3" fill="rgba(251,191,36,0.95)" stroke="rgba(45,28,12,0.9)" strokeWidth="0.75" />
-        </svg>
-      </div>
-
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-3 p-3 sm:p-4">
-        <div className="pointer-events-auto flex flex-wrap items-start justify-between gap-2">
-          <div className="rounded-2xl border border-teal-600/40 bg-black/80 px-4 py-3 shadow-[0_0_28px_rgba(20,184,166,0.12)] backdrop-blur-md">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-teal-400/90">
-              Energy
-            </p>
-            <p className="text-2xl font-bold tabular-nums text-[#f5f0e6]">
-              {game.energy}
-            </p>
-            <p className="mt-1 text-[10px] text-teal-200/50">
-              −2 per pickup · collect within {MAP_COLLECT_RADIUS_M}m
-            </p>
+      {/* Top HUD */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-2 p-3 sm:p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          {/* Player HUD */}
+          <div className="pointer-events-auto flex max-w-[min(100%,280px)] items-center gap-3 rounded-2xl border border-teal-500/40 bg-black/82 px-3 py-2.5 shadow-[0_0_28px_rgba(20,184,166,0.14)] backdrop-blur-md">
+            <div
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-amber-500/45 bg-gradient-to-br from-teal-900/80 to-black text-lg font-bold text-amber-200/95 shadow-inner"
+              aria-hidden
+            >
+              SG
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold uppercase tracking-wide text-teal-300/90">
+                Survivor
+              </p>
+              <p className="mt-0.5 text-[11px] text-teal-200/55">
+                Level{" "}
+                <span className="font-semibold text-amber-200/95">
+                  {game.level}
+                </span>
+              </p>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-teal-400/80">
+                  Energy
+                </span>
+                <span className="text-sm font-bold tabular-nums text-[#f5f0e6]">
+                  {game.energy}
+                </span>
+              </div>
+              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-black/60 ring-1 ring-teal-700/40">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-teal-600 to-amber-500/90 transition-[width] duration-300"
+                  style={{ width: `${xpPct}%` }}
+                />
+              </div>
+              <p className="mt-1 text-[9px] text-teal-200/45">
+                XP bar · −2 energy per pickup · collect within {MAP_COLLECT_RADIUS_M}
+                m
+              </p>
+            </div>
           </div>
-          <div className="flex flex-col items-end gap-2">
+
+          {/* Resources + actions */}
+          <div className="pointer-events-auto flex max-w-[min(100%,240px)] flex-col items-end gap-2">
+            <div className="rounded-2xl border border-amber-500/35 bg-black/82 px-3 py-2 text-right shadow-[0_0_24px_rgba(251,191,36,0.1)] backdrop-blur-md">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-amber-300/85">
+                Supplies
+              </p>
+              <p className="mt-1 text-sm tabular-nums text-[#f5f0e6]">
+                <span className="text-teal-300/90">Coins</span>{" "}
+                <span className="font-semibold">{game.coins}</span>
+              </p>
+              <p className="mt-0.5 text-xs tabular-nums text-teal-200/70">
+                Idols {game.idols} · Clues {game.clues}
+              </p>
+            </div>
             <Link
               href="/play"
-              className={`pointer-events-auto ${btnPrimarySm} inline-flex w-full min-w-[10rem] items-center justify-center sm:w-auto`}
+              className={`${btnPrimarySm} inline-flex w-full min-w-[11rem] items-center justify-center`}
             >
               Back to Dashboard
             </Link>
             <button
               type="button"
               onClick={onSearchNewArea}
-              className={`pointer-events-auto ${btnSecondarySm} w-full min-w-[10rem] sm:w-auto`}
+              className={`${btnSecondarySm} w-full min-w-[11rem]`}
             >
               Search New Area
             </button>
@@ -454,7 +550,7 @@ export function IslandMapClient() {
               <button
                 type="button"
                 onClick={onSpawnNearbyTestItem}
-                className={`pointer-events-auto ${btnSecondarySm} w-full min-w-[10rem] border border-amber-600/45 text-amber-100/95 sm:w-auto`}
+                className={`${btnSecondarySm} w-full min-w-[11rem] border border-amber-600/45 text-amber-100/95`}
               >
                 Spawn nearby test item
               </button>
@@ -463,8 +559,8 @@ export function IslandMapClient() {
         </div>
 
         <div className="pointer-events-auto max-w-md rounded-2xl border border-teal-600/35 bg-black/78 px-3 py-2.5 text-xs leading-snug text-[#f5f0e6]/90 shadow-[0_0_24px_rgba(251,191,36,0.08)] backdrop-blur-md">
-          Walk closer to items. Tap them when nearby to collect resources for your
-          tribe.
+          Walk closer to items. Tap markers when nearby to collect — selected
+          markers glow as your compass target.
         </div>
 
         {locationNote && (
@@ -474,8 +570,115 @@ export function IslandMapClient() {
         )}
       </div>
 
+      {/* Right-side controls */}
+      <div className="pointer-events-auto absolute right-3 top-[42%] z-[1000] flex -translate-y-1/2 flex-col gap-2 sm:right-4">
+        <button
+          type="button"
+          onClick={centerMapOnPlayer}
+          className="rounded-2xl border border-teal-600/50 bg-black/78 px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-teal-100 shadow-[0_0_18px_rgba(20,184,166,0.18)] backdrop-blur-md transition hover:border-amber-500/45 hover:text-amber-100"
+        >
+          Center
+        </button>
+        <button
+          type="button"
+          onClick={onFilterPlaceholder}
+          className="rounded-2xl border border-teal-700/45 bg-black/78 px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-teal-200/85 backdrop-blur-md transition hover:border-amber-500/35"
+        >
+          Filter
+        </button>
+      </div>
+
+      {/* Compass HUD */}
+      {compassHudVisible && (
+        <div className="pointer-events-auto absolute inset-x-0 bottom-0 z-[1000] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
+          <div className="mx-auto max-w-lg rounded-3xl border border-teal-500/40 bg-black/85 px-4 py-3 shadow-[0_0_36px_rgba(20,184,166,0.18)] backdrop-blur-lg">
+            <p className="mb-2 text-center text-[11px] font-medium leading-snug text-amber-100/95">
+              {compassLabel}
+            </p>
+            <div className="flex items-center justify-between gap-2 sm:gap-4">
+              <button
+                type="button"
+                onClick={() => setCompassHudVisible(false)}
+                className="shrink-0 rounded-2xl border border-teal-700/50 bg-black/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-teal-100 transition hover:border-amber-500/45 hover:text-amber-50"
+              >
+                Hide
+              </button>
+
+              <div className="relative mx-auto h-[min(28vw,7.5rem)] w-[min(28vw,7.5rem)] shrink-0 sm:h-32 sm:w-32">
+                <div
+                  className="absolute inset-0 transition-transform duration-150 ease-out will-change-transform"
+                  style={{
+                    transform: `rotate(${baseRotation}deg)`,
+                  }}
+                >
+                  <Image
+                    src="/map-ui/compass-base.png"
+                    alt=""
+                    width={256}
+                    height={256}
+                    className="pointer-events-none h-full w-full object-contain drop-shadow-[0_4px_18px_rgba(0,0,0,0.65)]"
+                    priority
+                  />
+                  <Image
+                    src="/map-ui/compass-dial.png"
+                    alt=""
+                    width={256}
+                    height={256}
+                    className="pointer-events-none absolute inset-0 h-full w-full object-contain drop-shadow-[0_2px_12px_rgba(251,191,36,0.35)]"
+                    style={{
+                      transform: `rotate(${bearingDeg}deg)`,
+                      transformOrigin: "center center",
+                    }}
+                    priority
+                  />
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void requestCompassPermission()}
+                  className="rounded-2xl border border-amber-500/45 bg-black/55 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-amber-100/95 transition hover:bg-black/70"
+                >
+                  Compass
+                </button>
+                {permission === "unknown" && (
+                  <button
+                    type="button"
+                    onClick={() => void requestCompassPermission()}
+                    className="rounded-xl border border-teal-600/50 px-2 py-1.5 text-[10px] font-medium text-teal-100/90"
+                  >
+                    Enable compass
+                  </button>
+                )}
+                {permission === "denied" && (
+                  <span className="max-w-[5.5rem] text-[9px] leading-tight text-teal-200/55">
+                    Heading unavailable — needle uses map north.
+                  </span>
+                )}
+                {!headingAvailable && permission === "granted" && (
+                  <span className="max-w-[5.5rem] text-[9px] text-teal-200/50">
+                    Point device to refresh heading.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!compassHudVisible && (
+        <button
+          type="button"
+          onClick={() => setCompassHudVisible(true)}
+          className="pointer-events-auto fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-[1001] rounded-full border border-amber-500/50 bg-black/85 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-amber-100 shadow-[0_0_24px_rgba(251,191,36,0.25)] backdrop-blur-md transition hover:border-teal-400/55"
+        >
+          Compass
+        </button>
+      )}
+
       {allCollected && (
-        <div className="pointer-events-auto absolute bottom-28 left-1/2 z-[1000] w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border border-teal-600/40 bg-black/88 p-4 text-center shadow-[0_0_32px_rgba(234,88,12,0.15)] backdrop-blur-md">
+        <div className="pointer-events-auto absolute bottom-48 left-1/2 z-[1000] w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border border-teal-600/40 bg-black/88 p-4 text-center shadow-[0_0_32px_rgba(234,88,12,0.15)] backdrop-blur-md sm:bottom-56">
           <p className="text-sm font-medium text-[#f5f0e6]">
             All nearby items collected.
           </p>
@@ -491,7 +694,7 @@ export function IslandMapClient() {
 
       {toast && (
         <div
-          className="pointer-events-none fixed bottom-24 left-1/2 z-[1001] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-2xl border border-teal-500/40 bg-[#0a1210]/95 px-5 py-3 text-center text-sm font-medium leading-snug text-[#f5f0e6] shadow-[0_0_28px_rgba(20,184,166,0.2)]"
+          className={`pointer-events-none fixed left-1/2 z-[1002] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-2xl border border-teal-500/40 bg-[#0a1210]/95 px-5 py-3 text-center text-sm font-medium leading-snug text-[#f5f0e6] shadow-[0_0_28px_rgba(20,184,166,0.2)] ${toastBottomClass}`}
           role="status"
         >
           {toast}
