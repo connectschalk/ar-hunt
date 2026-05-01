@@ -1,65 +1,51 @@
-import Image from "next/image";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { SurvivorNav } from "@/app/components/SurvivorNav";
+
+export const metadata: Metadata = {
+  title: { absolute: "Survivor GO" },
+  description: "Explore. Collect. Compete.",
+};
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="flex min-h-full flex-col bg-gradient-to-b from-[#0a1628] via-[#0c1f18] to-black text-zinc-100">
+      <main className="flex flex-1 flex-col items-center justify-center px-6 py-16 pb-28">
+        <div className="max-w-md text-center">
+          <p className="text-xs font-medium uppercase tracking-[0.3em] text-amber-400/70">
+            Welcome
+          </p>
+          <h1 className="mt-3 text-4xl font-bold tracking-tight text-white sm:text-5xl">
+            Survivor GO
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-4 text-lg text-emerald-200/70 sm:text-xl">
+            Explore. Collect. Compete.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+        <div className="mt-14 flex w-full max-w-sm flex-col gap-3">
+          <Link
+            href="/play"
+            className="flex h-14 items-center justify-center rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 text-base font-bold text-emerald-950 shadow-lg shadow-amber-900/20 transition hover:from-amber-300 hover:to-amber-400 active:scale-[0.99]"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            Start Game
+          </Link>
+          <Link
+            href="/join"
+            className="flex h-14 items-center justify-center rounded-2xl border border-emerald-700/50 bg-emerald-950/40 text-base font-semibold text-emerald-50 backdrop-blur-sm transition hover:border-emerald-500/50 hover:bg-emerald-900/50 active:scale-[0.99]"
           >
-            Documentation
-          </a>
+            Join Tribe
+          </Link>
+          <Link
+            href="/dev/ar-diagnostic"
+            className="mt-2 flex h-12 items-center justify-center rounded-xl text-sm font-medium text-zinc-500 transition hover:text-amber-200/80"
+          >
+            Developer AR Tests
+          </Link>
         </div>
       </main>
+      <div className="fixed bottom-0 left-0 right-0 z-10">
+        <SurvivorNav />
+      </div>
     </div>
   );
 }
