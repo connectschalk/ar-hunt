@@ -99,16 +99,18 @@ export function getMapItemIconSrc(item: MapItem): string {
   }
 }
 
+/** Square Leaflet icon sizes — preserve aspect ratio via CSS object-fit on the img. */
 export function mapItemIconLayout(rarity: ItemRarity): {
   iconSize: [number, number];
   iconAnchor: [number, number];
   popupAnchor: [number, number];
 } {
-  const h = rarity === "rare" ? 44 : rarity === "uncommon" ? 40 : 36;
-  const w = h;
+  const size =
+    rarity === "rare" ? 50 : rarity === "uncommon" ? 46 : 42;
   return {
-    iconSize: [w, h],
-    iconAnchor: [w / 2, h],
-    popupAnchor: [0, -h],
+    iconSize: [size, size],
+    /** Center of icon pinned to lat/lng (no horizontal stretch). */
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -Math.round(size / 2) - 6],
   };
 }

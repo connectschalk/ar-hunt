@@ -64,9 +64,27 @@ body {
     drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
 }
 
+/* Map spawn icons — Leaflet sets icon box size; keep PNG aspect ratio */
+.treasure-map-leaflet img.leaflet-marker-icon.map-item-marker-icon {
+  object-fit: contain;
+  object-position: center;
+}
+
 /* Selected map loot marker — compass target */
 .map-item-marker--target.leaflet-marker-icon,
 .leaflet-marker-icon.map-item-marker--target {
-  filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.95))
-    drop-shadow(0 0 4px rgba(20, 184, 166, 0.65));
+  animation: survivorMarkerPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes survivorMarkerPulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 8px rgba(255, 190, 80, 0.65))
+      drop-shadow(0 0 2px rgba(20, 184, 166, 0.45));
+  }
+  50% {
+    filter: drop-shadow(0 0 18px rgba(255, 190, 80, 1))
+      drop-shadow(0 0 28px rgba(251, 191, 36, 0.55))
+      drop-shadow(0 0 4px rgba(234, 88, 12, 0.45));
+  }
 }
