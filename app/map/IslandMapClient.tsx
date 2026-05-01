@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SVGProps,
+} from "react";
 import type {
   CircleMarker as LeafletCircleMarker,
   Map as LeafletMap,
@@ -26,10 +33,7 @@ import {
   savePersistedMapState,
   type MapItem,
 } from "@/lib/map-items";
-import {
-  calculateBearing,
-  getClosestItem,
-} from "@/lib/map-geo";
+import { calculateBearing, getClosestItem } from "@/lib/map-geo";
 import {
   formatMapCollectToastWithXp,
   applyMapCollectProgression,
@@ -41,7 +45,7 @@ import {
   saveGameState,
   type GameState,
 } from "@/lib/survivor-mvp";
-import { btnPrimarySm, btnSecondarySm } from "@/lib/survivor-ui";
+import { btnPrimarySm } from "@/lib/survivor-ui";
 import { useDeviceHeading } from "@/app/map/useDeviceHeading";
 
 function randomSpawnCount(): number {
@@ -97,6 +101,70 @@ function buildItemPopupHtml(
           </div>`;
 }
 
+function IconFilter(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
+      <path
+        strokeWidth={2}
+        strokeLinecap="round"
+        d="M4 5h16M7 12h10M10 19h4"
+      />
+    </svg>
+  );
+}
+
+function IconLocate(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
+      <circle cx="12" cy="12" r="3" strokeWidth={2} />
+      <path strokeWidth={2} d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    </svg>
+  );
+}
+
+function IconRefreshArea(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
+      <path
+        strokeWidth={2}
+        strokeLinecap="round"
+        d="M4 12a8 8 0 0113.657-5.657M20 12a8 8 0 01-13.657 5.657"
+      />
+      <path strokeWidth={2} strokeLinecap="round" d="M8 5H4V1M16 19h4v4" />
+    </svg>
+  );
+}
+
+function IconInfo(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
+      <circle cx="12" cy="12" r="9" strokeWidth={2} />
+      <path strokeWidth={2} strokeLinecap="round" d="M12 10v7M12 7h.01" />
+    </svg>
+  );
+}
+
+function IconCompassRose(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
+      <circle cx="12" cy="12" r="9" strokeWidth={1.5} opacity={0.85} />
+      <path
+        fill="currentColor"
+        d="M12 4l1.2 6.5L12 14l-1.2-3.5L12 4z"
+        opacity={0.9}
+      />
+      <path
+        fill="currentColor"
+        d="M12 20l-1.2-6.5L12 10l1.2 3.5L12 20z"
+        opacity={0.45}
+      />
+    </svg>
+  );
+}
+
+const hudIconBtn =
+  "flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-teal-600/45 bg-black/70 text-teal-100 shadow-[0_0_16px_rgba(20,184,166,0.12)] backdrop-blur-md transition hover:border-amber-500/45 hover:text-amber-100 active:scale-95";
+
 export function IslandMapClient() {
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(
     null,
@@ -111,6 +179,7 @@ export function IslandMapClient() {
     string | null
   >(null);
   const [compassHudVisible, setCompassHudVisible] = useState(true);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const {
     headingDeg,
@@ -222,12 +291,7 @@ export function IslandMapClient() {
       compassTargetItem.id === manualCompassTargetId;
     const prefix = manualActive ? "Target" : "Nearest item";
     return `${prefix}: ${compassTargetItem.variant} · ${dist}m`;
-  }, [
-    compassTargetItem,
-    userPos,
-    manualCompassTargetId,
-    items,
-  ]);
+  }, [compassTargetItem, userPos, manualCompassTargetId, items]);
 
   const bearingDeg = useMemo(() => {
     if (!userPos || !compassTargetItem) return 0;
@@ -425,10 +489,9 @@ export function IslandMapClient() {
             ? Math.round(haversineMeters(pos.lat, pos.lng, item.lat, item.lng))
             : null;
 
-        m.bindPopup(
-          buildItemPopupHtml(item, distM, isSel),
-          { maxWidth: 260 },
-        );
+        m.bindPopup(buildItemPopupHtml(item, distM, isSel), {
+          maxWidth: 260,
+        });
 
         m.on("click", (ev) => {
           L.DomEvent.stopPropagation(ev);
@@ -468,7 +531,9 @@ export function IslandMapClient() {
   const allCollected =
     !mapItemsLoading && items.length === 0 && Boolean(userPos);
 
-  const toastBottomClass = compassHudVisible ? "bottom-52" : "bottom-24";
+  const toastBottomClass = compassHudVisible
+    ? "bottom-[max(11rem,env(safe-area-inset-bottom))]"
+    : "bottom-[max(5.5rem,env(safe-area-inset-bottom))]";
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#1a120d]">
@@ -477,192 +542,190 @@ export function IslandMapClient() {
         className="treasure-map-leaflet absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/50 [&_.leaflet-control-attribution]:text-zinc-400 [&_.leaflet-marker-pane_img]:drop-shadow-[0_3px_14px_rgba(0,0,0,0.75)] [&_.map-item-marker-icon]:drop-shadow-[0_3px_14px_rgba(0,0,0,0.72)] [&_.map-item-marker-icon]:contrast-[1.08]"
       />
 
-      {/* Top HUD */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-2 p-3 sm:p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          {/* Player HUD */}
-          <div className="pointer-events-auto flex max-w-[min(100%,280px)] items-center gap-3 rounded-2xl border border-teal-500/40 bg-black/82 px-3 py-2.5 shadow-[0_0_28px_rgba(20,184,166,0.14)] backdrop-blur-md">
+      {/* Compact top HUD */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] px-3 pt-[max(0.5rem,env(safe-area-inset-top))]">
+        <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-2xl border border-teal-600/35 bg-black/65 px-2.5 py-2 shadow-[0_2px_20px_rgba(0,0,0,0.35)] backdrop-blur-md">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <div
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-amber-500/45 bg-gradient-to-br from-teal-900/80 to-black text-lg font-bold text-amber-200/95 shadow-inner"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-500/40 bg-gradient-to-br from-teal-900/70 to-black text-[11px] font-bold text-amber-200/95"
               aria-hidden
             >
               SG
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold uppercase tracking-wide text-teal-300/90">
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-[11px] font-semibold text-teal-100/95">
                 Survivor
               </p>
-              <p className="mt-0.5 text-[11px] text-teal-200/55">
-                Level{" "}
-                <span className="font-semibold text-amber-200/95">
-                  {game.level}
-                </span>
-              </p>
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className="text-[10px] uppercase tracking-wider text-teal-400/80">
-                  Energy
-                </span>
-                <span className="text-sm font-bold tabular-nums text-[#f5f0e6]">
-                  {game.energy}
-                </span>
-              </div>
-              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-black/60 ring-1 ring-teal-700/40">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-teal-600 to-amber-500/90 transition-[width] duration-300"
-                  style={{ width: `${xpPct}%` }}
-                />
-              </div>
-              <p className="mt-1 text-[9px] text-teal-200/45">
-                XP bar · −2 energy per pickup · collect within {MAP_COLLECT_RADIUS_M}
-                m
+              <p className="text-[10px] tabular-nums text-teal-200/75">
+                L<span className="text-amber-200/95">{game.level}</span>
+                <span className="mx-1 text-teal-600/80">·</span>
+                <span className="text-[#f5f0e6]/95">{game.energy}</span>{" "}
+                <span className="text-teal-400/70">NRG</span>
               </p>
             </div>
-          </div>
-
-          {/* Resources + actions */}
-          <div className="pointer-events-auto flex max-w-[min(100%,240px)] flex-col items-end gap-2">
-            <div className="rounded-2xl border border-amber-500/35 bg-black/82 px-3 py-2 text-right shadow-[0_0_24px_rgba(251,191,36,0.1)] backdrop-blur-md">
-              <p className="text-[10px] font-medium uppercase tracking-wider text-amber-300/85">
-                Supplies
-              </p>
-              <p className="mt-1 text-sm tabular-nums text-[#f5f0e6]">
-                <span className="text-teal-300/90">Coins</span>{" "}
-                <span className="font-semibold">{game.coins}</span>
-              </p>
-              <p className="mt-0.5 text-xs tabular-nums text-teal-200/70">
-                Idols {game.idols} · Clues {game.clues}
-              </p>
+            <div
+              className="hidden h-8 max-w-[72px] flex-1 overflow-hidden rounded-full bg-black/50 ring-1 ring-teal-800/40 sm:block"
+              title="XP progress"
+              aria-hidden
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-teal-600 to-amber-500/85 transition-[width] duration-300"
+                style={{ width: `${xpPct}%` }}
+              />
             </div>
-            <Link
-              href="/play"
-              className={`${btnPrimarySm} inline-flex w-full min-w-[11rem] items-center justify-center`}
-            >
-              Back to Dashboard
-            </Link>
-            <button
-              type="button"
-              onClick={onSearchNewArea}
-              className={`${btnSecondarySm} w-full min-w-[11rem]`}
-            >
-              Search New Area
-            </button>
-            {showDevSpawn && (
-              <button
-                type="button"
-                onClick={onSpawnNearbyTestItem}
-                className={`${btnSecondarySm} w-full min-w-[11rem] border border-amber-600/45 text-amber-100/95`}
-              >
-                Spawn nearby test item
-              </button>
-            )}
           </div>
-        </div>
-
-        <div className="pointer-events-auto max-w-md rounded-2xl border border-teal-600/35 bg-black/78 px-3 py-2.5 text-xs leading-snug text-[#f5f0e6]/90 shadow-[0_0_24px_rgba(251,191,36,0.08)] backdrop-blur-md">
-          Walk closer to items. Tap markers when nearby to collect — selected
-          markers glow as your compass target.
+          <div className="shrink-0 text-right text-[10px] tabular-nums leading-tight text-[#f5f0e6]/95">
+            <span className="text-amber-200/75">C</span>
+            {game.coins}
+            <span className="mx-1 text-teal-700/50">·</span>
+            <span className="text-teal-300/75">I</span>
+            {game.idols}
+            <span className="mx-1 text-teal-700/50">·</span>
+            <span className="text-teal-300/75">Cl</span>
+            {game.clues}
+          </div>
         </div>
 
         {locationNote && (
-          <p className="pointer-events-auto max-w-md rounded-xl border border-amber-600/40 bg-black/75 px-3 py-2 text-xs text-amber-100/90 backdrop-blur-md">
+          <p className="pointer-events-auto mt-2 max-w-md rounded-xl border border-amber-600/35 bg-black/70 px-2.5 py-1.5 text-[11px] text-amber-100/90 backdrop-blur-md">
             {locationNote}
           </p>
         )}
       </div>
 
-      {/* Right-side controls */}
-      <div className="pointer-events-auto absolute right-3 top-[42%] z-[1000] flex -translate-y-1/2 flex-col gap-2 sm:right-4">
+      {/* Right icon rail */}
+      <div className="pointer-events-auto absolute right-2 top-1/2 z-[1000] flex -translate-y-1/2 flex-col gap-2 sm:right-3">
         <button
           type="button"
-          onClick={centerMapOnPlayer}
-          className="rounded-2xl border border-teal-600/50 bg-black/78 px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-teal-100 shadow-[0_0_18px_rgba(20,184,166,0.18)] backdrop-blur-md transition hover:border-amber-500/45 hover:text-amber-100"
+          className={hudIconBtn}
+          aria-label="Filter map items"
+          title="Filter (coming soon)"
+          onClick={onFilterPlaceholder}
         >
-          Center
+          <IconFilter className="h-5 w-5" aria-hidden />
         </button>
         <button
           type="button"
-          onClick={onFilterPlaceholder}
-          className="rounded-2xl border border-teal-700/45 bg-black/78 px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-teal-200/85 backdrop-blur-md transition hover:border-amber-500/35"
+          className={hudIconBtn}
+          aria-label="Center map on your location"
+          title="Center on me"
+          onClick={centerMapOnPlayer}
         >
-          Filter
+          <IconLocate className="h-5 w-5" aria-hidden />
+        </button>
+        <button
+          type="button"
+          className={hudIconBtn}
+          aria-label="Search new area for items"
+          title="Search new area"
+          onClick={onSearchNewArea}
+        >
+          <IconRefreshArea className="h-5 w-5" aria-hidden />
+        </button>
+        <button
+          type="button"
+          className={hudIconBtn}
+          aria-label="How to play on the map"
+          title="Map tips"
+          onClick={() => setInfoOpen(true)}
+        >
+          <IconInfo className="h-5 w-5" aria-hidden />
         </button>
       </div>
 
-      {/* Compass HUD */}
+      {showDevSpawn && (
+        <button
+          type="button"
+          onClick={onSpawnNearbyTestItem}
+          className="pointer-events-auto absolute bottom-36 left-2 z-[999] rounded-full border border-amber-700/50 bg-black/75 px-2 py-1 text-[10px] font-medium text-amber-200/90 backdrop-blur-md sm:bottom-40"
+          title="Dev: spawn test item"
+        >
+          Dev spawn
+        </button>
+      )}
+
+      {/* Floating compass stack — bottom center */}
       {compassHudVisible && (
-        <div className="pointer-events-auto absolute inset-x-0 bottom-0 z-[1000] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
-          <div className="mx-auto max-w-lg rounded-3xl border border-teal-500/40 bg-black/85 px-4 py-3 shadow-[0_0_36px_rgba(20,184,166,0.18)] backdrop-blur-lg">
-            <p className="mb-2 text-center text-[11px] font-medium leading-snug text-amber-100/95">
-              {compassLabel}
-            </p>
-            <div className="flex items-center justify-between gap-2 sm:gap-4">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1000] flex flex-col items-center pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
+          <p className="pointer-events-none mb-1 max-w-[min(92vw,320px)] px-2 text-center text-[10px] font-medium leading-snug text-amber-100/90 drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]">
+            {compassLabel}
+          </p>
+
+          <div className="pointer-events-auto relative flex flex-col items-center">
+            <div className="relative">
               <button
                 type="button"
                 onClick={() => setCompassHudVisible(false)}
-                className="shrink-0 rounded-2xl border border-teal-700/50 bg-black/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-teal-100 transition hover:border-amber-500/45 hover:text-amber-50"
+                className="absolute -right-1 -top-1 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-white/25 bg-black text-[15px] font-light leading-none text-white shadow-lg backdrop-blur-sm transition hover:bg-zinc-900"
+                aria-label="Hide compass"
               >
-                Hide
+                ×
               </button>
 
-              <div className="relative mx-auto h-[min(28vw,7.5rem)] w-[min(28vw,7.5rem)] shrink-0 sm:h-32 sm:w-32">
+              {/* Shared square; base + dial stacked with identical box and object-contain */}
+              <div className="relative h-[min(30vw,8.25rem)] w-[min(30vw,8.25rem)] sm:h-36 sm:w-36">
                 <div
-                  className="absolute inset-0 transition-transform duration-150 ease-out will-change-transform"
-                  style={{
-                    transform: `rotate(${baseRotation}deg)`,
-                  }}
+                  className="absolute inset-0 flex items-center justify-center transition-transform duration-150 ease-out will-change-transform"
+                  style={{ transform: `rotate(${baseRotation}deg)` }}
                 >
-                  <Image
-                    src="/map-ui/compass-base.png"
-                    alt=""
-                    width={256}
-                    height={256}
-                    className="pointer-events-none h-full w-full object-contain drop-shadow-[0_4px_18px_rgba(0,0,0,0.65)]"
-                    priority
-                  />
-                  <Image
-                    src="/map-ui/compass-dial.png"
-                    alt=""
-                    width={256}
-                    height={256}
-                    className="pointer-events-none absolute inset-0 h-full w-full object-contain drop-shadow-[0_2px_12px_rgba(251,191,36,0.35)]"
-                    style={{
-                      transform: `rotate(${bearingDeg}deg)`,
-                      transformOrigin: "center center",
-                    }}
-                    priority
-                  />
+                  <div className="relative h-[92%] w-[92%]">
+                    <Image
+                      src="/map-ui/compass-base.png"
+                      alt=""
+                      fill
+                      sizes="144px"
+                      className="pointer-events-none object-contain object-center drop-shadow-[0_4px_18px_rgba(0,0,0,0.65)]"
+                      priority
+                    />
+                    <Image
+                      src="/map-ui/compass-dial.png"
+                      alt=""
+                      fill
+                      sizes="144px"
+                      className="pointer-events-none object-contain object-center drop-shadow-[0_2px_12px_rgba(251,191,36,0.35)]"
+                      style={{
+                        transform: `rotate(${bearingDeg}deg)`,
+                        transformOrigin: "center center",
+                      }}
+                      priority
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-col items-stretch gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => void requestCompassPermission()}
-                  className="rounded-2xl border border-amber-500/45 bg-black/55 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-amber-100/95 transition hover:bg-black/70"
-                >
-                  Compass
-                </button>
-                {permission === "unknown" && (
-                  <button
-                    type="button"
-                    onClick={() => void requestCompassPermission()}
-                    className="rounded-xl border border-teal-600/50 px-2 py-1.5 text-[10px] font-medium text-teal-100/90"
-                  >
-                    Enable compass
-                  </button>
-                )}
-                {permission === "denied" && (
-                  <span className="max-w-[5.5rem] text-[9px] leading-tight text-teal-200/55">
-                    Heading unavailable — needle uses map north.
-                  </span>
-                )}
-                {!headingAvailable && permission === "granted" && (
-                  <span className="max-w-[5.5rem] text-[9px] text-teal-200/50">
-                    Point device to refresh heading.
-                  </span>
-                )}
-              </div>
+              {(permission === "unknown" ||
+                permission === "denied" ||
+                !headingAvailable) && (
+                <div className="mt-1 flex justify-center gap-1">
+                  {permission === "unknown" && (
+                    <button
+                      type="button"
+                      onClick={() => void requestCompassPermission()}
+                      className="rounded-full border border-teal-600/50 bg-black/70 p-1 text-teal-200 shadow backdrop-blur-md hover:border-amber-500/45"
+                      aria-label="Enable device compass"
+                      title="Enable compass"
+                    >
+                      <IconCompassRose className="h-5 w-5" aria-hidden />
+                    </button>
+                  )}
+                  {(permission === "denied" ||
+                    (!headingAvailable && permission === "granted")) && (
+                    <span className="max-w-[14rem] text-center text-[9px] leading-tight text-teal-200/55">
+                      {permission === "denied"
+                        ? "Compass heading off — using map north."
+                        : "Rotate device for live heading."}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
+
+            <Link
+              href="/play"
+              className="pointer-events-auto mt-2 rounded-full border border-teal-700/40 bg-black/55 px-3 py-1 text-[11px] font-medium text-teal-100/95 shadow-[0_2px_12px_rgba(0,0,0,0.4)] backdrop-blur-md transition hover:border-amber-500/35 hover:text-amber-50"
+            >
+              Back to Dashboard
+            </Link>
           </div>
         </div>
       )}
@@ -671,21 +734,54 @@ export function IslandMapClient() {
         <button
           type="button"
           onClick={() => setCompassHudVisible(true)}
-          className="pointer-events-auto fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-[1001] rounded-full border border-amber-500/50 bg-black/85 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-amber-100 shadow-[0_0_24px_rgba(251,191,36,0.25)] backdrop-blur-md transition hover:border-teal-400/55"
+          className={`pointer-events-auto fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-3 z-[1001] ${hudIconBtn} h-12 w-12`}
+          aria-label="Show compass"
+          title="Show compass"
         >
-          Compass
+          <IconCompassRose className="h-6 w-6" aria-hidden />
         </button>
       )}
 
+      {/* Info modal */}
+      {infoOpen && (
+        <div
+          className="fixed inset-0 z-[2000] flex items-end justify-center bg-black/55 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-[2px] sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="map-info-title"
+        >
+          <div className="relative w-full max-w-sm rounded-2xl border border-teal-600/40 bg-[#0a1210]/96 p-5 shadow-[0_0_40px_rgba(20,184,166,0.2)] backdrop-blur-md">
+            <button
+              type="button"
+              className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full border border-teal-700/50 bg-black/60 text-lg leading-none text-teal-200 transition hover:border-amber-500/45 hover:text-amber-50"
+              onClick={() => setInfoOpen(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <h2
+              id="map-info-title"
+              className="pr-10 text-sm font-semibold text-amber-100/95"
+            >
+              Island map
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-teal-100/85">
+              Walk closer to items. Tap markers when nearby to collect resources.
+              Tap an item to make the compass point to it.
+            </p>
+          </div>
+        </div>
+      )}
+
       {allCollected && (
-        <div className="pointer-events-auto absolute bottom-48 left-1/2 z-[1000] w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border border-teal-600/40 bg-black/88 p-4 text-center shadow-[0_0_32px_rgba(234,88,12,0.15)] backdrop-blur-md sm:bottom-56">
-          <p className="text-sm font-medium text-[#f5f0e6]">
+        <div className="pointer-events-auto absolute bottom-[max(10rem,env(safe-area-inset-bottom))] left-1/2 z-[999] w-[min(88vw,300px)] -translate-x-1/2 rounded-2xl border border-teal-600/40 bg-black/82 p-3 text-center shadow-lg backdrop-blur-md">
+          <p className="text-xs font-medium text-[#f5f0e6]/95">
             All nearby items collected.
           </p>
           <button
             type="button"
             onClick={onSearchNewArea}
-            className={`mt-3 w-full ${btnPrimarySm}`}
+            className={`mt-2 w-full ${btnPrimarySm} py-2 text-xs`}
           >
             Search New Area
           </button>
@@ -694,7 +790,7 @@ export function IslandMapClient() {
 
       {toast && (
         <div
-          className={`pointer-events-none fixed left-1/2 z-[1002] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-2xl border border-teal-500/40 bg-[#0a1210]/95 px-5 py-3 text-center text-sm font-medium leading-snug text-[#f5f0e6] shadow-[0_0_28px_rgba(20,184,166,0.2)] ${toastBottomClass}`}
+          className={`pointer-events-none fixed left-1/2 z-[1002] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-xl border border-teal-500/40 bg-[#0a1210]/95 px-4 py-2.5 text-center text-xs font-medium leading-snug text-[#f5f0e6] shadow-[0_0_28px_rgba(20,184,166,0.2)] ${toastBottomClass}`}
           role="status"
         >
           {toast}
