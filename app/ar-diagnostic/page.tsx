@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const AFRAME_URL = "https://aframe.io/releases/1.4.2/aframe.min.js";
-/** Same-origin GLB: place file at `public/astronaut.glb` */
+/** Same-origin GLB: e.g. `public/astronaut.glb` */
 const ASTRO_GLB_SRC = "/astronaut.glb";
-const ASTRO_ASSET_ID = "astro";
+const GLTF_DIRECT = `url(${ASTRO_GLB_SRC})`;
+const MODEL_LOAD_TIMEOUT_MS = 8000;
 
 const UI_Z = 1000;
 const SCENE_Z = 10;
@@ -13,7 +14,12 @@ const VIDEO_Z = 0;
 
 type CamState = "idle" | "requesting" | "ready" | "error";
 type LibState = "idle" | "loading" | "loaded" | "error";
-type ModelState = "idle" | "loading" | "loaded" | "error";
+type ModelState =
+  | "idle"
+  | "loading"
+  | "loaded"
+  | "error"
+  | "timeout - GLB not loaded";
 
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -57,6 +63,9 @@ export default function ArDiagnosticPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const sceneHostRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const modelLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const [cameraStatus, setCameraStatus] = useState<CamState>("idle");
   const [aframeStatus, setAframeStatus] = useState<LibState>("idle");
@@ -75,6 +84,10 @@ export default function ArDiagnosticPage() {
     setModelStatus("idle");
     setAframeStatus("idle");
     setModelErrorDetail(null);
+    if (modelLoadTimeoutRef.current) {
+      clearTimeout(modelLoadTimeoutRef.current);
+      modelLoadTimeoutRef.current = null;
+    }
   }, []);
 
   const bootstrap = useCallback(async () => {
@@ -131,12 +144,6 @@ export default function ArDiagnosticPage() {
       "logarithmicDepthBuffer: true; antialias: true",
     );
 
-    const assets = document.createElement("a-assets");
-    const assetItem = document.createElement("a-asset-item");
-    assetItem.setAttribute("id", ASTRO_ASSET_ID);
-    assetItem.setAttribute("src", ASTRO_GLB_SRC);
-    assets.appendChild(assetItem);
-
     const ambient = document.createElement("a-entity");
     ambient.setAttribute(
       "light",
@@ -154,10 +161,11 @@ export default function ArDiagnosticPage() {
     camera.setAttribute("look-controls", "pointerLockEnabled: false");
 
     const astro = document.createElement("a-entity");
-    console.log("model requested", ASTRO_GLB_SRC);
-    astro.setAttribute("gltf-model", `#${ASTRO_ASSET_ID}`);
+    console.log("Direct GLB requested", ASTRO_GLB_SRC);
+    astro.setAttribute("gltf-model", GLTF_DIRECT);
     astro.setAttribute("position", "0 -1 -3");
-    astro.setAttribute("rotation", "0 0 0");
+    astro.setAttribute("scale", "2 2 2");
+    astro.setAttribute("rotation", "0 180 0");
 
     const box = document.createElement("a-box");
     box.setAttribute("position", "-1 0 -3");
@@ -179,14 +187,21 @@ export default function ArDiagnosticPage() {
     camera.appendChild(box);
     camera.appendChild(sphere);
 
-    scene.appendChild(assets);
     scene.appendChild(ambient);
     scene.appendChild(directional);
     scene.appendChild(camera);
 
+    const clearModelTimeout = () => {
+      if (modelLoadTimeoutRef.current) {
+        clearTimeout(modelLoadTimeoutRef.current);
+        modelLoadTimeoutRef.current = null;
+      }
+    };
+
     astro.addEventListener(
       "model-loaded",
       () => {
+        clearModelTimeout();
         console.log("model-loaded", ASTRO_GLB_SRC);
         setModelStatus("loaded");
         setModelErrorDetail(null);
@@ -196,6 +211,7 @@ export default function ArDiagnosticPage() {
     astro.addEventListener(
       "model-error",
       (ev) => {
+        clearModelTimeout();
         const d =
           "detail" in ev && (ev as CustomEvent).detail != null
             ? JSON.stringify((ev as CustomEvent).detail)
@@ -208,6 +224,12 @@ export default function ArDiagnosticPage() {
     );
 
     host.appendChild(scene);
+
+    modelLoadTimeoutRef.current = setTimeout(() => {
+      modelLoadTimeoutRef.current = null;
+      console.log("model timeout", ASTRO_GLB_SRC);
+      setModelStatus("timeout - GLB not loaded");
+    }, MODEL_LOAD_TIMEOUT_MS);
 
     const sceneEl = scene as unknown as HTMLElement;
     styleSceneCanvas(sceneEl);
@@ -289,7 +311,9 @@ export default function ArDiagnosticPage() {
                   ? "text-emerald-400"
                   : modelStatus === "error"
                     ? "text-red-400"
-                    : "text-amber-300"
+                    : modelStatus === "timeout - GLB not loaded"
+                      ? "text-orange-400"
+                      : "text-amber-300"
               }
             >
               {modelStatus}
@@ -297,7 +321,8 @@ export default function ArDiagnosticPage() {
           </li>
         </ul>
         <p className="mt-2 break-all text-[10px] text-zinc-500">
-          {ASTRO_GLB_SRC} · #{ASTRO_ASSET_ID}
+          gltf-model=&quot;{GLTF_DIRECT}&quot; · timeout {MODEL_LOAD_TIMEOUT_MS}
+          ms
         </p>
         {modelErrorDetail && (
           <p className="mt-2 break-all text-[10px] text-red-300">
