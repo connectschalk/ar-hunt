@@ -14,6 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://survivor-go.vercel.app"),
   title: {
     default: "Survivor GO",
     template: "%s · Survivor GO",
@@ -21,6 +22,27 @@ export const metadata: Metadata = {
   description: "Explore. Collect. Compete.",
   icons: {
     icon: [{ url: "/favicon.ico" }],
+  },
+  openGraph: {
+    title: "Survivor GO",
+    description: "Explore. Collect. Compete.",
+    url: "https://survivor-go.vercel.app",
+    siteName: "Survivor GO",
+    images: [
+      {
+        url: "/og-survivor-go.png",
+        width: 1024,
+        height: 1024,
+        alt: "Survivor GO",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Survivor GO",
+    description: "Explore. Collect. Compete.",
+    images: ["/og-survivor-go.png"],
   },
 };
 
