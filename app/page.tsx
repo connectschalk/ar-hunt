@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { SurvivorNav } from "@/app/components/SurvivorNav";
+import { btnPrimary, btnSecondary, survivorPageBg } from "@/lib/survivor-ui";
 
 export const metadata: Metadata = {
   title: { absolute: "Survivor GO" },
@@ -9,35 +11,40 @@ export const metadata: Metadata = {
 
 export default function Home() {
   return (
-    <div className="flex min-h-full flex-col bg-gradient-to-b from-[#0a1628] via-[#0c1f18] to-black text-zinc-100">
-      <main className="flex flex-1 flex-col items-center justify-center px-6 py-16 pb-28">
-        <div className="max-w-md text-center">
-          <p className="text-xs font-medium uppercase tracking-[0.3em] text-amber-400/70">
+    <div className={survivorPageBg}>
+      <main className="flex flex-1 flex-col items-center justify-center px-6 py-12 pb-28">
+        <div className="flex max-w-md flex-col items-center text-center">
+          <h1 className="sr-only">Survivor GO</h1>
+          <p className="text-xs font-medium uppercase tracking-[0.35em] text-amber-300/80">
             Welcome
           </p>
-          <h1 className="mt-3 text-4xl font-bold tracking-tight text-white sm:text-5xl">
-            Survivor GO
-          </h1>
-          <p className="mt-4 text-lg text-emerald-200/70 sm:text-xl">
+          <div className="relative mt-6 w-full max-w-[min(100%,320px)] sm:max-w-[380px]">
+            <Image
+              src="/survivor-go-logo.png"
+              alt="Survivor GO!"
+              width={1024}
+              height={1024}
+              priority
+              className="h-auto w-full drop-shadow-[0_0_40px_rgba(251,191,36,0.18),0_16px_48px_rgba(0,0,0,0.55)]"
+            />
+          </div>
+          <p className="mt-8 text-lg text-[#f5f0e6]/90 sm:text-xl">
             Explore. Collect. Compete.
           </p>
         </div>
         <div className="mt-14 flex w-full max-w-sm flex-col gap-3">
-          <Link
-            href="/play"
-            className="flex h-14 items-center justify-center rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 text-base font-bold text-emerald-950 shadow-lg shadow-amber-900/20 transition hover:from-amber-300 hover:to-amber-400 active:scale-[0.99]"
-          >
+          <Link href="/play" className={`flex h-14 items-center justify-center ${btnPrimary}`}>
             Start Game
           </Link>
           <Link
             href="/join"
-            className="flex h-14 items-center justify-center rounded-2xl border border-emerald-700/50 bg-emerald-950/40 text-base font-semibold text-emerald-50 backdrop-blur-sm transition hover:border-emerald-500/50 hover:bg-emerald-900/50 active:scale-[0.99]"
+            className={`flex h-14 items-center justify-center ${btnSecondary}`}
           >
             Join Tribe
           </Link>
           <Link
             href="/dev/ar-diagnostic"
-            className="mt-2 flex h-12 items-center justify-center rounded-xl text-sm font-medium text-zinc-500 transition hover:text-amber-200/80"
+            className="mt-2 flex h-12 items-center justify-center rounded-xl text-sm font-medium text-teal-600/80 transition hover:text-amber-200/90"
           >
             Developer AR Tests
           </Link>

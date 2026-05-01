@@ -2,11 +2,15 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Map as LeafletMap, CircleMarker } from "leaflet";
+import type { Map as LeafletMap, Marker } from "leaflet";
+import {
+  getMapItemIconSrc,
+  mapItemIconLayout,
+} from "@/lib/map-marker-icons";
 import {
   applyMapItemCollect,
   clearPersistedMapState,
-  formatCollectToast,
+  createNearbyTestMapItem,
   generateMapItems,
   haversineMeters,
   loadPersistedMapState,
@@ -14,17 +18,20 @@ import {
   MAP_FALLBACK_LAT,
   MAP_FALLBACK_LNG,
   MAP_ITEMS_TTL_MS,
-  MAP_MARKER_STYLES,
-  markerRadiusForRarity,
   savePersistedMapState,
   type MapItem,
 } from "@/lib/map-items";
+import {
+  formatMapCollectToastWithXp,
+  applyMapCollectProgression,
+} from "@/lib/player-progression";
 import {
   DEFAULT_GAME_STATE,
   loadGameState,
   saveGameState,
   type GameState,
 } from "@/lib/survivor-mvp";
+import { btnPrimary, btnPrimarySm, btnSecondarySm } from "@/lib/survivor-ui";
 
 function randomSpawnCount(): number {
   return 5 + Math.floor(Math.random() * 6);
@@ -58,7 +65,7 @@ export function IslandMapClient() {
 
   const mapDivRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
-  const itemMarkersRef = useRef<Map<string, CircleMarker>>(new Map());
+  const itemMarkersRef = useRef<Map<string, Marker>>(new Map());
   const itemsForMapRef = useRef<MapItem[]>([]);
   const userPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const collectHandlerRef = useRef<(item: MapItem) => void>(() => {});
@@ -159,14 +166,15 @@ export function IslandMapClient() {
         showToast("Not enough energy");
         return;
       }
-      saveGameState(next);
-      setGame(next);
+      const withProg = applyMapCollectProgression(next, item);
+      saveGameState(withProg);
+      setGame(withProg);
       setItems((prev) => {
         const filtered = prev.filter((i) => i.id !== item.id);
         persistItems(filtered);
         return filtered;
       });
-      showToast(formatCollectToast(item));
+      showToast(formatMapCollectToastWithXp(item));
     },
     [persistItems, showToast],
   );
@@ -179,6 +187,24 @@ export function IslandMapClient() {
     searchNewArea(pos, setItems);
     showToast("Searching a new area…");
   }, [showToast]);
+
+  const onSpawnNearbyTestItem = useCallback(() => {
+    const pos = userPosRef.current;
+    if (!pos) {
+      showToast("Waiting for your position…");
+      return;
+    }
+    const item = createNearbyTestMapItem(pos.lat, pos.lng);
+    setItems((prev) => {
+      const next = [...prev, item];
+      persistItems(next);
+      return next;
+    });
+    showToast("Spawned nearby test Coconut (10–20 m).");
+  }, [persistItems, showToast]);
+
+  const showDevSpawn =
+    typeof process !== "undefined" && process.env.NODE_ENV === "development";
 
   useEffect(() => {
     if (!userPos || !mapDivRef.current || mapRef.current) return;
@@ -244,14 +270,13 @@ export function IslandMapClient() {
       const pos = userPosRef.current;
 
       list.forEach((item) => {
-        const colors = MAP_MARKER_STYLES[item.type];
-        const radius = markerRadiusForRarity(item.rarity);
-        const m = L.circleMarker([item.lat, item.lng], {
-          radius,
-          color: colors.stroke,
-          fillColor: colors.fill,
-          fillOpacity: 0.92,
-          weight: 2,
+        const layout = mapItemIconLayout(item.rarity);
+        const m = L.marker([item.lat, item.lng], {
+          icon: L.icon({
+            iconUrl: getMapItemIconSrc(item),
+            ...layout,
+            className: "map-item-marker-icon",
+          }),
         }).addTo(map);
 
         const distM =
@@ -289,63 +314,72 @@ export function IslandMapClient() {
     !mapItemsLoading && items.length === 0 && Boolean(userPos);
 
   return (
-    <div className="relative h-[100dvh] w-full overflow-hidden bg-[#0a1628]">
+    <div className="relative h-[100dvh] w-full overflow-hidden bg-[#050608]">
       <div
         ref={mapDivRef}
-        className="absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/50 [&_.leaflet-control-attribution]:text-zinc-400"
+        className="absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/50 [&_.leaflet-control-attribution]:text-zinc-400 [&_.map-item-marker-icon]:drop-shadow-[0_2px_8px_rgba(0,0,0,0.55)]"
       />
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-3 p-3 sm:p-4">
         <div className="pointer-events-auto flex flex-wrap items-start justify-between gap-2">
-          <div className="rounded-2xl border border-emerald-800/60 bg-black/75 px-4 py-3 shadow-lg backdrop-blur-md">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-emerald-500/90">
+          <div className="rounded-2xl border border-teal-600/40 bg-black/80 px-4 py-3 shadow-[0_0_28px_rgba(20,184,166,0.12)] backdrop-blur-md">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-teal-400/90">
               Energy
             </p>
-            <p className="text-2xl font-bold tabular-nums text-white">
+            <p className="text-2xl font-bold tabular-nums text-[#f5f0e6]">
               {game.energy}
             </p>
-            <p className="mt-1 text-[10px] text-zinc-500">
+            <p className="mt-1 text-[10px] text-teal-200/50">
               −2 per pickup · collect within {MAP_COLLECT_RADIUS_M}m
             </p>
           </div>
           <div className="flex flex-col items-end gap-2">
             <Link
               href="/play"
-              className="pointer-events-auto rounded-2xl border border-amber-800/50 bg-amber-950/90 px-4 py-2.5 text-sm font-semibold text-amber-100 shadow-lg backdrop-blur-md transition hover:bg-amber-900/90"
+              className={`pointer-events-auto ${btnPrimarySm} inline-flex w-full min-w-[10rem] items-center justify-center sm:w-auto`}
             >
               Back to Dashboard
             </Link>
             <button
               type="button"
               onClick={onSearchNewArea}
-              className="pointer-events-auto rounded-xl border border-zinc-600 bg-zinc-900/90 px-3 py-2 text-xs font-medium text-zinc-200 backdrop-blur-md hover:bg-zinc-800"
+              className={`pointer-events-auto ${btnSecondarySm} w-full min-w-[10rem] sm:w-auto`}
             >
               Search New Area
             </button>
+            {showDevSpawn && (
+              <button
+                type="button"
+                onClick={onSpawnNearbyTestItem}
+                className={`pointer-events-auto ${btnSecondarySm} w-full min-w-[10rem] border border-amber-600/45 text-amber-100/95 sm:w-auto`}
+              >
+                Spawn nearby test item
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="pointer-events-auto max-w-md rounded-2xl border border-emerald-800/40 bg-black/70 px-3 py-2.5 text-xs leading-snug text-emerald-100/90 shadow-lg backdrop-blur-md">
+        <div className="pointer-events-auto max-w-md rounded-2xl border border-teal-600/35 bg-black/78 px-3 py-2.5 text-xs leading-snug text-[#f5f0e6]/90 shadow-[0_0_24px_rgba(251,191,36,0.08)] backdrop-blur-md">
           Walk closer to items. Tap them when nearby to collect resources for your
           tribe.
         </div>
 
         {locationNote && (
-          <p className="pointer-events-auto max-w-md rounded-xl border border-amber-900/40 bg-black/70 px-3 py-2 text-xs text-amber-200/90 backdrop-blur-md">
+          <p className="pointer-events-auto max-w-md rounded-xl border border-amber-600/40 bg-black/75 px-3 py-2 text-xs text-amber-100/90 backdrop-blur-md">
             {locationNote}
           </p>
         )}
       </div>
 
       {allCollected && (
-        <div className="pointer-events-auto absolute bottom-28 left-1/2 z-[1000] w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border border-amber-800/50 bg-black/85 p-4 text-center shadow-xl backdrop-blur-md">
-          <p className="text-sm font-medium text-amber-100">
+        <div className="pointer-events-auto absolute bottom-28 left-1/2 z-[1000] w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border border-teal-600/40 bg-black/88 p-4 text-center shadow-[0_0_32px_rgba(234,88,12,0.15)] backdrop-blur-md">
+          <p className="text-sm font-medium text-[#f5f0e6]">
             All nearby items collected.
           </p>
           <button
             type="button"
             onClick={onSearchNewArea}
-            className="mt-3 w-full rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 py-3 text-sm font-bold text-emerald-950"
+            className={`mt-3 w-full ${btnPrimarySm}`}
           >
             Search New Area
           </button>
@@ -354,7 +388,7 @@ export function IslandMapClient() {
 
       {toast && (
         <div
-          className="pointer-events-none fixed bottom-24 left-1/2 z-[1001] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-2xl border border-emerald-600/50 bg-emerald-950/95 px-5 py-3 text-center text-sm font-medium leading-snug text-emerald-50 shadow-xl"
+          className="pointer-events-none fixed bottom-24 left-1/2 z-[1001] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-2xl border border-teal-500/40 bg-[#0a1210]/95 px-5 py-3 text-center text-sm font-medium leading-snug text-[#f5f0e6] shadow-[0_0_28px_rgba(20,184,166,0.2)]"
           role="status"
         >
           {toast}
@@ -362,7 +396,7 @@ export function IslandMapClient() {
       )}
 
       {!userPos && (
-        <div className="absolute inset-0 z-[500] flex items-center justify-center bg-black/60 text-zinc-300">
+        <div className="absolute inset-0 z-[500] flex items-center justify-center bg-black/70 text-[#f5f0e6]/80">
           <p className="text-sm">Finding your position…</p>
         </div>
       )}

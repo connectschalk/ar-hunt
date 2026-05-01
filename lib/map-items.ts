@@ -1,5 +1,10 @@
-import type { GameState } from "@/lib/survivor-mvp";
-import { MAP_COLLECT_ENERGY_COST } from "@/lib/survivor-mvp";
+import { getMapItemIconSrc } from "@/lib/map-marker-icons";
+import {
+  MAP_COLLECT_ENERGY_COST,
+  addOrIncrementBag,
+  type BagResourceType,
+  type GameState,
+} from "@/lib/survivor-mvp";
 
 /** Cape Town — used when geolocation is unavailable */
 export const MAP_FALLBACK_LAT = -33.9249;
@@ -101,7 +106,8 @@ function rollStandardRarity(type: MapResourceType): ItemRarity {
   return Math.random() < 0.55 ? "common" : "uncommon";
 }
 
-function rollOneMapItem(
+/** 100–300 m from center — idols/clues and variant pool (testing pickup stays far). */
+function rollFarMapItem(
   centerLat: number,
   centerLng: number,
   i: number,
@@ -144,6 +150,50 @@ function rollOneMapItem(
   };
 }
 
+/** Guaranteed reachable test pickup: ~10–20 m from spawn center. */
+function createNearbyGuaranteedCoconut(
+  centerLat: number,
+  centerLng: number,
+  index: number,
+): MapItem {
+  const bearing = Math.random() * 360;
+  const dist = 10 + Math.random() * 10;
+  const { lat, lng } = offsetFromLatLng(centerLat, centerLng, bearing, dist);
+  return {
+    id: newItemId(index),
+    type: "food",
+    variant: "Coconut",
+    rarity: "common",
+    lat,
+    lng,
+  };
+}
+
+/**
+ * One Coconut (food, common) 10–20 m from the player — same rules as the first
+ * generated item. For dev “spawn nearby” on /map.
+ */
+export function createNearbyTestMapItem(
+  playerLat: number,
+  playerLng: number,
+): MapItem {
+  const bearing = Math.random() * 360;
+  const dist = 10 + Math.random() * 10;
+  const { lat, lng } = offsetFromLatLng(playerLat, playerLng, bearing, dist);
+  const id =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `map-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return {
+    id,
+    type: "food",
+    variant: "Coconut",
+    rarity: "common",
+    lat,
+    lng,
+  };
+}
+
 export function generateMapItems(
   centerLat: number,
   centerLng: number,
@@ -151,8 +201,9 @@ export function generateMapItems(
 ): MapItem[] {
   const n = Math.min(10, Math.max(5, count));
   const items: MapItem[] = [];
-  for (let i = 0; i < n; i++) {
-    items.push(rollOneMapItem(centerLat, centerLng, i));
+  items.push(createNearbyGuaranteedCoconut(centerLat, centerLng, 0));
+  for (let i = 1; i < n; i++) {
+    items.push(rollFarMapItem(centerLat, centerLng, i));
   }
   return items;
 }
@@ -215,6 +266,11 @@ export function clearPersistedMapState(): void {
   window.localStorage.removeItem(MAP_ITEMS_STORAGE_KEY);
 }
 
+function mapTypeToBagType(t: MapResourceType): BagResourceType {
+  if (t === "material") return "material";
+  return t;
+}
+
 export function applyMapItemCollect(
   state: GameState,
   item: MapItem,
@@ -246,7 +302,13 @@ export function applyMapItemCollect(
     default:
       return null;
   }
-  return next;
+  return addOrIncrementBag(next, {
+    name: item.variant,
+    type: mapTypeToBagType(item.type),
+    icon: getMapItemIconSrc(item),
+    rarity: item.rarity,
+    quantity: 1,
+  });
 }
 
 export function collectRewardLabel(item: MapItem): string {

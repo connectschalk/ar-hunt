@@ -2,8 +2,35 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@/app/components/AuthProvider";
+import { PlayerBag } from "@/app/components/PlayerBag";
+import { SurvivorHeaderLogo } from "@/app/components/SurvivorHeaderLogo";
 import { SurvivorNav } from "@/app/components/SurvivorNav";
+import { TribeChallengeCard } from "@/app/components/TribeChallengeCard";
+import { bagEntryFromQuickExploreFind } from "@/lib/map-marker-icons";
 import {
+  addXp,
+  applyDailyStreakOnPlay,
+  getAchievementList,
+  xpIntoCurrentLevel,
+  XP_QUICK_EXPLORE,
+} from "@/lib/player-progression";
+import {
+  btnPrimary,
+  btnSecondary,
+  linkTeal,
+  statPill,
+  statPillLabel,
+  survivorPageBg,
+  tribalPanel,
+  tribalPanelInner,
+} from "@/lib/survivor-ui";
+import {
+  type CloudSaveUiStatus,
+  subscribeCloudSaveStatus,
+} from "@/lib/cloud-save-status";
+import {
+  addOrIncrementBag,
   DEFAULT_GAME_STATE,
   EXPLORE_COST,
   loadGameState,
@@ -15,11 +42,9 @@ import {
 
 function StatPill({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-2xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-3">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-emerald-500/90">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
+    <div className={statPill}>
+      <p className={statPillLabel}>{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums text-[#f5f0e6]">
         {value}
       </p>
     </div>
@@ -27,12 +52,25 @@ function StatPill({ label, value }: { label: string; value: number }) {
 }
 
 export function PlayDashboard() {
+  const { user: authUser, loading: authLoading } = useAuth();
   const [game, setGame] = useState<GameState>(DEFAULT_GAME_STATE);
   const [hydrated, setHydrated] = useState(false);
   const [tribeName, setTribeName] = useState<string | null>(null);
   const [lastFind, setLastFind] = useState<string | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<CloudSaveUiStatus>("local");
+
+  useEffect(() => subscribeCloudSaveStatus(setCloudStatus), []);
 
   useEffect(() => {
+    const onMerged = () => setGame(loadGameState());
+    window.addEventListener("survivor-go-game-merged", onMerged);
+    return () => window.removeEventListener("survivor-go-game-merged", onMerged);
+  }, []);
+
+  useEffect(() => {
+    const raw = loadGameState();
+    const withStreak = applyDailyStreakOnPlay(raw);
+    saveGameState(withStreak);
     setGame(loadGameState());
     setTribeName(loadTribeName());
     setHydrated(true);
@@ -43,16 +81,34 @@ export function PlayDashboard() {
     saveGameState(next);
   }, []);
 
+  const syncGameFromStorage = useCallback(() => {
+    setGame(loadGameState());
+  }, []);
+
   const canExplore = game.energy >= EXPLORE_COST;
   const needRest = game.energy === 0;
+
+  const xpProgressPct = xpIntoCurrentLevel(game.xp);
+  const achievementRows = getAchievementList(game);
+  const achievementsUnlocked = achievementRows.filter((a) => a.unlocked).length;
+
+  const cloudLine = !authUser
+    ? "Local save only"
+    : cloudStatus === "cloud_error"
+      ? "Cloud sync issue"
+      : "Cloud save active";
 
   const explore = () => {
     if (!canExplore) return;
     const found = randomFind();
     let next = { ...game, energy: game.energy - EXPLORE_COST };
     next = found.apply(next);
+    next = addOrIncrementBag(next, bagEntryFromQuickExploreFind(found));
+    next = addXp(next, XP_QUICK_EXPLORE);
     persist(next);
-    setLastFind(`You found a ${found.title}! ${found.detail}. (−${EXPLORE_COST} Energy)`);
+    setLastFind(
+      `You found a ${found.title}! ${found.detail}. (−${EXPLORE_COST} Energy) +${XP_QUICK_EXPLORE} XP.`,
+    );
   };
 
   const rest = () => {
@@ -62,23 +118,66 @@ export function PlayDashboard() {
   };
 
   return (
-    <div className="flex min-h-full flex-col bg-gradient-to-b from-[#0a1628] via-[#0c1f18] to-black text-zinc-100">
-      <header className="border-b border-emerald-900/40 bg-black/20 px-4 py-6 text-center backdrop-blur-sm">
-        <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-          Survivor GO
-        </h1>
-        <p className="mt-2 text-sm text-emerald-200/60">Island dashboard</p>
-        {!hydrated && (
-          <p className="mt-2 text-xs text-emerald-600/80">Loading your camp…</p>
-        )}
-      </header>
+    <div className={survivorPageBg}>
+      <SurvivorHeaderLogo subtitle="Island dashboard" />
+      {hydrated && !authLoading && (
+        <p
+          className="px-4 pt-2 text-center text-xs font-medium text-teal-400/85"
+          role="status"
+        >
+          {cloudLine}
+        </p>
+      )}
+      {!hydrated && (
+        <p className="py-2 text-center text-xs text-teal-500/80">
+          Loading your camp…
+        </p>
+      )}
 
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 px-4 py-6 pb-28">
-        <section
-          className="rounded-3xl border border-amber-900/30 bg-gradient-to-br from-amber-950/50 to-emerald-950/30 p-5 shadow-lg shadow-black/40"
-          aria-label="Player status"
-        >
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-200/90">
+        <section className={`${tribalPanel} p-5`} aria-label="Player progress">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-amber-200/95">
+            Player progress
+          </h2>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <StatPill label="Level" value={game.level} />
+            <StatPill label="Total XP" value={game.xp} />
+          </div>
+          <div className="mt-4">
+            <div className="flex justify-between text-xs text-[#f5f0e6]/75">
+              <span>Next level</span>
+              <span className="tabular-nums">
+                {xpProgressPct} / 100 XP this level
+              </span>
+            </div>
+            <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-black/60 ring-1 ring-teal-500/25">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-cyan-600 to-teal-400"
+                style={{ width: `${xpProgressPct}%` }}
+              />
+            </div>
+          </div>
+          <p className="mt-4 text-sm text-teal-200/80">
+            Daily streak:{" "}
+            <span className="font-semibold text-amber-200 tabular-nums">
+              {game.dailyStreak}
+            </span>{" "}
+            {game.dailyStreak === 1 ? "day" : "days"}
+          </p>
+          <p className="mt-2 text-sm text-teal-200/70">
+            Achievements:{" "}
+            <span className="font-semibold text-[#f5f0e6] tabular-nums">
+              {achievementsUnlocked}
+            </span>
+            <span className="text-teal-500/80">
+              {" "}
+              / {achievementRows.length}
+            </span>
+          </p>
+        </section>
+
+        <section className={`${tribalPanel} p-5`} aria-label="Player status">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-amber-200/95">
             Survivor status
           </h2>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -87,35 +186,65 @@ export function PlayDashboard() {
             <StatPill label="Water" value={game.water} />
             <StatPill label="Materials" value={game.materials} />
             <StatPill label="Survivor Coins" value={game.coins} />
-            <StatPill
-              label="Hidden Immunity Idols"
-              value={game.idols}
-            />
+            <StatPill label="Hidden Immunity Idols" value={game.idols} />
             <StatPill label="Advantage Clues" value={game.clues} />
           </div>
         </section>
 
-        <section className="rounded-3xl border border-emerald-800/50 bg-emerald-950/20 p-5">
+        <section className={`${tribalPanelInner} p-5`} aria-label="Player bag">
+          <h2 className="text-lg font-semibold text-amber-100/95">Bag</h2>
+          <p className="mt-1 text-sm text-teal-200/55">
+            Items you&apos;ve picked up — tap markers on the map or use Quick
+            Explore.
+          </p>
+          <PlayerBag items={game.bag} />
+        </section>
+
+        <section className={`${tribalPanelInner} p-5`}>
+          <h2 className="text-lg font-semibold text-amber-100/95">
+            Achievements
+          </h2>
+          <ul className="mt-3 space-y-2">
+            {achievementRows.map((a) => (
+              <li
+                key={a.id}
+                className={`rounded-xl border px-3 py-2 text-xs leading-snug sm:text-sm ${
+                  a.unlocked
+                    ? "border-amber-500/35 bg-amber-950/25 text-[#f5f0e6]"
+                    : "border-white/10 bg-black/30 text-zinc-500"
+                }`}
+              >
+                <span className="font-semibold">{a.title}</span>
+                <span className={a.unlocked ? "text-teal-200/70" : ""}>
+                  {" "}
+                  — {a.description}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className={`${tribalPanelInner} p-5`}>
           <Link
             href="/map"
-            className="flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 py-4 text-base font-bold text-emerald-950 shadow-md transition hover:from-amber-400 hover:to-amber-500"
+            className={`flex w-full items-center justify-center ${btnPrimary}`}
           >
             Explore Island
           </Link>
-          <p className="mt-2 text-center text-xs text-emerald-200/50">
-            Map — find supplies near your location
+          <p className="mt-2 text-center text-xs text-teal-200/55">
+            Map — supplies near your location
           </p>
           <button
             type="button"
             onClick={explore}
             disabled={!canExplore}
-            className="mt-4 w-full rounded-2xl border border-amber-600/60 bg-amber-950/40 py-3.5 text-base font-bold text-amber-100 shadow-md transition enabled:hover:bg-amber-900/50 disabled:cursor-not-allowed disabled:opacity-40"
+            className={`mt-4 w-full ${btnSecondary}`}
           >
             Quick Explore
           </button>
           {!canExplore && (
             <p
-              className="mt-3 text-center text-sm text-amber-200/80"
+              className="mt-3 text-center text-sm text-amber-200/85"
               role="status"
             >
               {needRest
@@ -124,70 +253,34 @@ export function PlayDashboard() {
             </p>
           )}
           {lastFind && (
-            <p className="mt-3 rounded-xl bg-black/30 px-3 py-2 text-center text-sm text-emerald-100/90">
+            <p className="mt-3 rounded-xl border border-teal-800/40 bg-black/40 px-3 py-2 text-center text-sm text-[#f5f0e6]/90">
               {lastFind}
             </p>
           )}
           <button
             type="button"
             onClick={rest}
-            className="mt-4 w-full rounded-2xl border border-emerald-600/50 bg-emerald-900/30 py-3 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-900/50"
+            className={`mt-4 w-full ${btnSecondary} text-sm`}
           >
             Rest — restore Energy to 100
           </button>
         </section>
 
-        <section className="rounded-3xl border border-emerald-800/40 bg-black/25 p-5">
-          <h2 className="text-lg font-semibold text-amber-100">Inventory</h2>
-          <p className="mt-1 text-sm text-emerald-200/60">
-            What you&apos;ve gathered on the island.
-          </p>
-          <ul className="mt-4 space-y-2 text-sm text-zinc-200">
-            <li className="flex justify-between border-b border-white/5 py-2">
-              <span className="text-emerald-400/80">Food</span>
-              <span className="tabular-nums font-medium">{game.food}</span>
-            </li>
-            <li className="flex justify-between border-b border-white/5 py-2">
-              <span className="text-emerald-400/80">Water</span>
-              <span className="tabular-nums font-medium">{game.water}</span>
-            </li>
-            <li className="flex justify-between border-b border-white/5 py-2">
-              <span className="text-emerald-400/80">Materials</span>
-              <span className="tabular-nums font-medium">{game.materials}</span>
-            </li>
-            <li className="flex justify-between border-b border-white/5 py-2">
-              <span className="text-emerald-400/80">Survivor Coins</span>
-              <span className="tabular-nums font-medium">{game.coins}</span>
-            </li>
-            <li className="flex justify-between border-b border-white/5 py-2">
-              <span className="text-emerald-400/80">Hidden Immunity Idols</span>
-              <span className="tabular-nums font-medium">{game.idols}</span>
-            </li>
-            <li className="flex justify-between py-2">
-              <span className="text-emerald-400/80">Advantage Clues</span>
-              <span className="tabular-nums font-medium">{game.clues}</span>
-            </li>
-          </ul>
-        </section>
-
-        <section className="rounded-3xl border border-emerald-800/40 bg-black/25 p-5">
-          <h2 className="text-lg font-semibold text-amber-100">Tribe</h2>
+        <section className={`${tribalPanelInner} p-5`}>
+          <h2 className="text-lg font-semibold text-amber-100/95">Tribe</h2>
           {tribeName ? (
-            <p className="mt-2 text-sm text-zinc-300">
+            <p className="mt-2 text-sm text-[#f5f0e6]/80">
               You&apos;re aligned with{" "}
               <span className="font-semibold text-amber-200">{tribeName}</span>
               .{" "}
-              <Link href="/join" className="text-emerald-400 underline-offset-2 hover:underline">
+              <Link href="/join" className={linkTeal}>
                 Change
               </Link>
             </p>
           ) : (
-            <p className="mt-2 text-sm text-zinc-400">
+            <p className="mt-2 text-sm text-teal-200/60">
               No tribe yet.{" "}
-              <Link
-                href="/join"
-                className="font-medium text-amber-300 hover:underline"
-              >
+              <Link href="/join" className={linkTeal}>
                 Join or create one
               </Link>
               .
@@ -195,15 +288,7 @@ export function PlayDashboard() {
           )}
         </section>
 
-        <section className="rounded-3xl border border-amber-900/25 bg-amber-950/15 p-5">
-          <h2 className="text-lg font-semibold text-amber-100">
-            Weekly Challenge
-          </h2>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-            Tribe challenges and seasonal goals are coming soon. Keep exploring
-            to stock up.
-          </p>
-        </section>
+        <TribeChallengeCard onGameSynced={syncGameFromStorage} />
       </main>
 
       <div className="fixed bottom-0 left-0 right-0 z-10">

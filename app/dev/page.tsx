@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { DevAuthEmail } from "@/app/components/DevAuthEmail";
+import { SupabaseStatus } from "@/app/components/SupabaseStatus";
 
 export const metadata = {
   title: "Developer AR tests · Survivor GO",
@@ -17,6 +19,22 @@ export default function DevHubPage() {
           Preserved AR work for camera, A-Frame, and GPS placement. Not part of
           the main player flow.
         </p>
+        <div className="mt-6 rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            Backend (dev check)
+          </p>
+          <div className="mt-2 space-y-2">
+            <SupabaseStatus />
+            <div className="border-t border-zinc-700/80 pt-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                Auth session
+              </p>
+              <div className="mt-2">
+                <DevAuthEmail />
+              </div>
+            </div>
+          </div>
+        </div>
         <ul className="mt-8 flex flex-col gap-3">
           <li>
             <Link
