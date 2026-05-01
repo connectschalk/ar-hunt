@@ -13,6 +13,24 @@ const TARGET_LONGITUDE = 18.963577;
 /** User must be within this radius (meters) before the AR view unlocks */
 const UNLOCK_RADIUS_METERS = 5000;
 
+// -----------------------------------------------------------------------------
+// GLB marker at GPS target (paths are under `public/` → URL from site root)
+// -----------------------------------------------------------------------------
+/** Model file: `/character.glb` or if under `public/models/`, use `/models/character.glb` */
+const CHARACTER_MODEL_SRC = "/character.glb";
+/** `a-asset-item` id referenced by `gltf-model="#characterModel"` — change both if you rename */
+const CHARACTER_MODEL_ASSET_ID = "characterModel";
+/** Uniform scale of the placed model (X Y Z) */
+const CHARACTER_MODEL_SCALE = "1 1 1";
+/** Rotation in degrees (X Y Z); often adjust Y so the mesh faces the user */
+const CHARACTER_MODEL_ROTATION = "0 180 0";
+/** Model position relative to the GPS anchor (meters); increase Y to raise above ground */
+const CHARACTER_MODEL_POSITION = "0 0 0";
+/** "Tap to collect" label offset from anchor (meters); raise Y if your model is tall */
+const COLLECT_LABEL_POSITION = "0 5.5 0";
+/** Label text size */
+const COLLECT_LABEL_SCALE = "12 12 12";
+
 /**
  * AR.js script URL (AR.js org build 3.3.2).
  * Note: `https://unpkg.com/aframe-arjs@3.3.2/aframe-ar.js` is not published on npm/CDN;
@@ -167,6 +185,12 @@ export default function ArTestPage() {
     );
     scene.setAttribute("loading-screen", "enabled: false");
 
+    const assets = document.createElement("a-assets");
+    const assetItem = document.createElement("a-asset-item");
+    assetItem.setAttribute("id", CHARACTER_MODEL_ASSET_ID);
+    assetItem.setAttribute("src", CHARACTER_MODEL_SRC);
+    assets.appendChild(assetItem);
+
     const camera = document.createElement("a-camera");
     camera.setAttribute("gps-camera", "");
     camera.setAttribute("rotation-reader", "");
@@ -185,29 +209,81 @@ export default function ArTestPage() {
       `latitude: ${TARGET_LATITUDE}; longitude: ${TARGET_LONGITUDE}`,
     );
 
+    const modelEntity = document.createElement("a-entity");
+    modelEntity.setAttribute("gltf-model", `#${CHARACTER_MODEL_ASSET_ID}`);
+    modelEntity.setAttribute("scale", CHARACTER_MODEL_SCALE);
+    modelEntity.setAttribute("rotation", CHARACTER_MODEL_ROTATION);
+    modelEntity.setAttribute("position", CHARACTER_MODEL_POSITION);
+    modelEntity.setAttribute("class", "clickable");
+    modelEntity.setAttribute("visible", "true");
+
     const sphere = document.createElement("a-sphere");
     sphere.setAttribute("radius", "2");
     sphere.setAttribute(
       "material",
       "color: #22ffc8; metalness: 0.2; roughness: 0.35; emissive: #004433; emissiveIntensity: 0.35",
     );
-    sphere.setAttribute("position", "0 2.5 0");
+    sphere.setAttribute("position", CHARACTER_MODEL_POSITION);
     sphere.setAttribute("class", "clickable");
-    sphere.addEventListener("click", (ev) => {
+    sphere.setAttribute("visible", "false");
+
+    const onCollectClick = (ev: Event) => {
       ev.stopPropagation();
       collectHandlerRef.current();
-    });
+    };
+    modelEntity.addEventListener("click", onCollectClick);
+    sphere.addEventListener("click", onCollectClick);
+
+    let modelLoadSettled = false;
+    const fallbackMs = 15000;
+    let fallbackTimer: number;
+
+    const activateSphereFallback = (reason: string) => {
+      window.clearTimeout(fallbackTimer);
+      if (modelLoadSettled) return;
+      modelLoadSettled = true;
+      console.warn("[ar-test] GLB fallback (sphere):", reason);
+      modelEntity.setAttribute("visible", "false");
+      sphere.setAttribute("visible", "true");
+    };
+
+    fallbackTimer = window.setTimeout(() => {
+      if (!modelLoadSettled) {
+        activateSphereFallback(`no model-loaded within ${fallbackMs}ms`);
+      }
+    }, fallbackMs) as unknown as number;
+
+    modelEntity.addEventListener(
+      "model-loaded",
+      () => {
+        window.clearTimeout(fallbackTimer);
+        modelLoadSettled = true;
+        sphere.setAttribute("visible", "false");
+        console.log("[ar-test] GLB model loaded:", CHARACTER_MODEL_SRC);
+      },
+      { once: true },
+    );
+    modelEntity.addEventListener(
+      "model-error",
+      (ev) => {
+        console.warn("[ar-test] GLB model-error", ev);
+        activateSphereFallback("model-error");
+      },
+      { once: true },
+    );
 
     const label = document.createElement("a-text");
     label.setAttribute("value", "Tap to collect");
     label.setAttribute("align", "center");
     label.setAttribute("color", "#ffffff");
-    label.setAttribute("position", "0 5.5 0");
-    label.setAttribute("scale", "12 12 12");
+    label.setAttribute("position", COLLECT_LABEL_POSITION);
+    label.setAttribute("scale", COLLECT_LABEL_SCALE);
 
+    anchor.appendChild(modelEntity);
     anchor.appendChild(sphere);
     anchor.appendChild(label);
 
+    scene.appendChild(assets);
     scene.appendChild(camera);
     scene.appendChild(anchor);
 
