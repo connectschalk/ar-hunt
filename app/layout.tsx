@@ -21,7 +21,11 @@ export const metadata: Metadata = {
   },
   description: "Explore. Collect. Compete.",
   icons: {
-    icon: [{ url: "/favicon.ico" }],
+    icon: [
+      { url: "/favicon.ico?v=2" },
+      { url: "/icon.png?v=2", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-icon.png?v=2" }],
   },
   openGraph: {
     title: "Survivor GO",
@@ -30,19 +34,16 @@ export const metadata: Metadata = {
     siteName: "Survivor GO",
     images: [
       {
-        url: "/og-survivor-go.png",
-        width: 1024,
-        height: 1024,
-        alt: "Survivor GO",
+        url: "/og-survivor-go.png?v=2",
+        width: 1200,
+        height: 630,
       },
     ],
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Survivor GO",
-    description: "Explore. Collect. Compete.",
-    images: ["/og-survivor-go.png"],
+    images: ["/og-survivor-go.png?v=2"],
   },
 };
 
