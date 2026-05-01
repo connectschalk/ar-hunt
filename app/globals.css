@@ -70,23 +70,33 @@ body {
   object-position: center;
 }
 
-/* Selected map loot marker — compass target (glow + breathing scale) */
+/* Selected marker — glow pulse only (no transform → stable Leaflet hitbox/position) */
 .map-item-marker--target.leaflet-marker-icon,
 .leaflet-marker-icon.map-item-marker--target {
-  transform-origin: center center;
-  will-change: transform, filter;
-  filter: drop-shadow(0 0 14px rgba(255, 180, 60, 0.95));
+  will-change: filter;
+  filter: drop-shadow(0 0 12px rgba(255, 175, 55, 0.92))
+    drop-shadow(0 0 4px rgba(234, 88, 12, 0.55));
   animation: survivorMarkerPulse 1.6s ease-in-out infinite;
 }
 
 @keyframes survivorMarkerPulse {
   0%,
   100% {
-    transform: scale(1);
-    filter: drop-shadow(0 0 10px rgba(255, 180, 60, 0.85));
+    filter: drop-shadow(0 0 10px rgba(255, 185, 70, 0.85))
+      drop-shadow(0 0 4px rgba(251, 191, 36, 0.45))
+      drop-shadow(0 0 2px rgba(0, 0, 0, 0.5));
   }
   50% {
-    transform: scale(1.15);
-    filter: drop-shadow(0 0 22px rgba(255, 200, 90, 1));
+    filter: drop-shadow(0 0 26px rgba(255, 205, 95, 1))
+      drop-shadow(0 0 16px rgba(251, 180, 50, 0.88))
+      drop-shadow(0 0 8px rgba(234, 88, 12, 0.65))
+      drop-shadow(0 0 3px rgba(0, 0, 0, 0.55));
   }
+}
+
+/* /map compass — keep PNG stack visually floating (no plate behind Next/Image) */
+.island-map-compass-stack img,
+.island-map-compass-stack span {
+  background: transparent !important;
+  background-color: transparent !important;
 }

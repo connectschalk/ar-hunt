@@ -113,11 +113,17 @@ function buildItemPopupHtml(
   const sel =
     isSelected &&
     `<span style="display:block;margin-top:8px;color:#fcd34d;font-size:11px;font-weight:600;letter-spacing:.02em">Selected target</span>`;
+  const canCollect =
+    distM != null && distM <= MAP_COLLECT_RADIUS_M;
+  const collectBlock = canCollect
+    ? `<button type="button" data-map-collect="${item.id}" style="margin-top:10px;width:100%;padding:9px 10px;border-radius:10px;border:1px solid rgba(251,191,36,0.55);background:linear-gradient(180deg,#b45309 0%,#7c2d12 100%);color:#fffbeb;font-weight:700;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.4)">Collect</button>`
+    : `<p style="margin-top:8px;opacity:.8;font-size:11px;line-height:1.35">Move within ${MAP_COLLECT_RADIUS_M} m to collect.</p>`;
   return `<div style="font-size:13px;line-height:1.45;min-width:140px">
             <strong>${item.variant}</strong><br/>
             <span style="opacity:.85">${capRarity}</span><br/>
             <span style="opacity:.9">${distLine}</span>
             ${sel || ""}
+            ${collectBlock}
           </div>`;
 }
 
@@ -183,7 +189,7 @@ function IconCompassRose(props: SVGProps<SVGSVGElement>) {
 }
 
 const hudIconBtn =
-  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-teal-600/40 bg-black/65 text-teal-100 shadow-[0_0_14px_rgba(20,184,166,0.14)] backdrop-blur-md transition hover:border-amber-400/55 hover:text-amber-50 hover:shadow-[0_0_18px_rgba(251,191,36,0.22)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95";
+  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-teal-500/45 bg-black/72 text-teal-50 shadow-[0_2px_14px_rgba(0,0,0,0.55),0_0_18px_rgba(251,191,36,0.18)] backdrop-blur-md transition hover:border-amber-400/55 hover:text-amber-50 hover:shadow-[0_2px_16px_rgba(0,0,0,0.5),0_0_26px_rgba(251,191,36,0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/45 active:scale-95";
 
 export function IslandMapClient() {
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(
@@ -208,6 +214,8 @@ export function IslandMapClient() {
   const userPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const collectHandlerRef = useRef<(item: MapItem) => void>(() => {});
   const hasSpawnedInitialItemsRef = useRef(false);
+  const manualCompassTargetIdRef = useRef<string | null>(null);
+  const mapCollectCleanupRef = useRef<(() => void) | null>(null);
   const playerMarkerRef = useRef<LeafletCircleMarker | null>(null);
   const prevRotationRef = useRef<number | null>(null);
 
@@ -218,6 +226,10 @@ export function IslandMapClient() {
   useEffect(() => {
     itemsForMapRef.current = items;
   }, [items]);
+
+  useEffect(() => {
+    manualCompassTargetIdRef.current = manualCompassTargetId;
+  }, [manualCompassTargetId]);
 
   useEffect(() => {
     setGame(loadGameState());
@@ -464,6 +476,24 @@ export function IslandMapClient() {
       mapRef.current = map;
       setMapReady(true);
 
+      const rootEl = mapDivRef.current;
+      if (rootEl) {
+        const handleMapCollectClick = (e: MouseEvent) => {
+          const btn = (e.target as HTMLElement).closest("[data-map-collect]");
+          if (!btn || !rootEl.contains(btn)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const id = btn.getAttribute("data-map-collect");
+          if (!id) return;
+          const found = itemsForMapRef.current.find((i) => i.id === id);
+          if (found) collectHandlerRef.current(found);
+        };
+        rootEl.addEventListener("click", handleMapCollectClick);
+        mapCollectCleanupRef.current = () => {
+          rootEl.removeEventListener("click", handleMapCollectClick);
+        };
+      }
+
       window.setTimeout(() => {
         map.invalidateSize();
       }, 200);
@@ -481,6 +511,8 @@ export function IslandMapClient() {
 
   useEffect(() => {
     return () => {
+      mapCollectCleanupRef.current?.();
+      mapCollectCleanupRef.current = null;
       playerMarkerRef.current = null;
       if (mapRef.current) {
         mapRef.current.remove();
@@ -509,7 +541,7 @@ export function IslandMapClient() {
 
       list.forEach((item) => {
         const layout = mapItemIconLayout(item.rarity);
-        const isSel = item.id === manualCompassTargetId;
+        const isSel = item.id === manualCompassTargetIdRef.current;
         const m = L.marker([item.lat, item.lng], {
           icon: L.icon({
             iconUrl: getMapItemIconSrc(item),
@@ -527,10 +559,8 @@ export function IslandMapClient() {
           maxWidth: 260,
         });
 
-        m.on("click", (ev) => {
-          L.DomEvent.stopPropagation(ev);
+        m.on("click", () => {
           setManualCompassTargetId(item.id);
-          collectHandlerRef.current(item);
         });
 
         itemMarkersRef.current.set(item.id, m);
@@ -540,12 +570,12 @@ export function IslandMapClient() {
     return () => {
       cancelled = true;
     };
-  }, [items, mapReady, manualCompassTargetId]);
+  }, [items, mapReady]);
 
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
-    void import("leaflet").then(() => {
+    void import("leaflet").then((L) => {
       if (!mapRef.current) return;
       const pos = userPosRef.current;
       itemsForMapRef.current.forEach((item) => {
@@ -556,6 +586,14 @@ export function IslandMapClient() {
         );
         const isSel = item.id === manualCompassTargetId;
         m.setPopupContent(buildItemPopupHtml(item, distM, isSel));
+        const layout = mapItemIconLayout(item.rarity);
+        m.setIcon(
+          L.icon({
+            iconUrl: getMapItemIconSrc(item),
+            ...layout,
+            className: `map-item-marker-icon${isSel ? " map-item-marker--target" : ""}`,
+          }),
+        );
       });
     });
   }, [userPos, mapReady, items, manualCompassTargetId]);
@@ -576,30 +614,30 @@ export function IslandMapClient() {
         className="treasure-map-leaflet absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:z-[500] [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/45 [&_.leaflet-control-attribution]:text-zinc-400 [&_.leaflet-marker-pane_img]:drop-shadow-[0_3px_12px_rgba(0,0,0,0.65)]"
       />
 
-      {/* Top HUD — amber / fire strip (above Leaflet UI) */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[10000] pt-[env(safe-area-inset-top)]">
-        <div className="pointer-events-auto flex items-center justify-between gap-2 border-b border-amber-500/35 bg-gradient-to-b from-black/80 via-[#1a0f08]/88 to-black/75 px-3 py-2.5 shadow-[0_4px_28px_rgba(234,88,12,0.22),inset_0_1px_0_rgba(251,191,36,0.12)] backdrop-blur-md">
+      {/* Top HUD — amber/fire strip (matches bottom dock) */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[10000] px-2 pt-[env(safe-area-inset-top)] sm:px-3">
+        <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-b-2xl border border-amber-400/25 border-t-0 bg-gradient-to-r from-amber-950/92 via-orange-900/82 to-black/85 px-3 py-3.5 shadow-[0_8px_28px_rgba(0,0,0,0.45),0_4px_18px_rgba(234,88,12,0.28),inset_0_-1px_0_rgba(251,191,36,0.12)] backdrop-blur-xl ring-1 ring-inset ring-amber-300/20">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-400/40 bg-gradient-to-br from-amber-900/50 via-black to-teal-950/80 text-xs font-bold text-amber-100 shadow-[0_0_16px_rgba(251,191,36,0.25)] ring-1 ring-amber-500/30"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-amber-400/45 bg-gradient-to-br from-amber-900/55 via-black to-orange-950/75 text-[14px] font-bold text-amber-50 shadow-[0_0_22px_rgba(251,191,36,0.35)] ring-1 ring-amber-400/35"
               aria-hidden
             >
               SG
             </div>
             <div className="min-w-0 leading-tight">
-              <p className="truncate text-xs font-bold tracking-wide text-amber-100/95 drop-shadow-sm">
+              <p className="truncate text-[14px] font-bold tracking-wide text-amber-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]">
                 Survivor
               </p>
-              <p className="mt-0.5 text-[11px] tabular-nums text-amber-100/90">
+              <p className="mt-0.5 text-[13px] tabular-nums text-amber-100/92">
                 L<span className="font-bold text-amber-200">{game.level}</span>
-                <span className="mx-2 text-amber-700/50">·</span>
-                <span className="font-semibold text-[#f8efd9]">
+                <span className="mx-2 text-amber-700/45">·</span>
+                <span className="font-semibold text-[#fdf6e8]">
                   Energy {game.energy}
                 </span>
               </p>
             </div>
             <div
-              className="hidden h-8 max-w-[72px] flex-1 overflow-hidden rounded-full bg-black/50 ring-1 ring-amber-600/30 sm:block"
+              className="hidden h-9 max-w-[76px] flex-1 overflow-hidden rounded-full bg-black/55 ring-1 ring-amber-600/35 sm:block"
               title="XP progress"
               aria-hidden
             >
@@ -610,16 +648,16 @@ export function IslandMapClient() {
             </div>
           </div>
           <div
-            className="flex shrink-0 items-center gap-3 text-[11px] font-semibold tabular-nums text-amber-50/95"
+            className="flex shrink-0 items-center gap-3.5 text-[13px] font-semibold tabular-nums text-amber-50"
             title="Coins · Idols · Clues"
           >
             <span className="flex items-center gap-1.5">
               <Image
                 src="/map-icons/coin.png"
                 alt=""
-                width={22}
-                height={22}
-                className="h-[22px] w-[22px] object-contain drop-shadow-[0_1px_6px_rgba(251,191,36,0.4)]"
+                width={28}
+                height={28}
+                className="h-7 w-7 object-contain drop-shadow-[0_2px_10px_rgba(251,191,36,0.5)]"
               />
               {game.coins}
             </span>
@@ -627,9 +665,9 @@ export function IslandMapClient() {
               <Image
                 src="/map-icons/medical-kit.png"
                 alt=""
-                width={22}
-                height={22}
-                className="h-[22px] w-[22px] object-contain drop-shadow-[0_1px_6px_rgba(251,191,36,0.35)]"
+                width={28}
+                height={28}
+                className="h-7 w-7 object-contain drop-shadow-[0_2px_10px_rgba(251,191,36,0.45)]"
               />
               {game.idols}
             </span>
@@ -637,9 +675,9 @@ export function IslandMapClient() {
               <Image
                 src="/map-icons/compass.png"
                 alt=""
-                width={22}
-                height={22}
-                className="h-[22px] w-[22px] object-contain drop-shadow-[0_1px_6px_rgba(251,191,36,0.35)]"
+                width={28}
+                height={28}
+                className="h-7 w-7 object-contain drop-shadow-[0_2px_10px_rgba(251,191,36,0.45)]"
               />
               {game.clues}
             </span>
@@ -654,7 +692,7 @@ export function IslandMapClient() {
       </div>
 
       {/* Right icon rail — below top HUD */}
-      <div className="pointer-events-auto absolute right-2 top-[calc(env(safe-area-inset-top)+5.25rem)] z-[10000] flex flex-col gap-1.5 sm:right-3">
+      <div className="pointer-events-auto absolute right-2 top-[calc(env(safe-area-inset-top)+6.25rem)] z-[10000] flex flex-col gap-2 sm:right-3">
         <button
           type="button"
           className={hudIconBtn}
@@ -662,7 +700,7 @@ export function IslandMapClient() {
           title="Filter (coming soon)"
           onClick={onFilterPlaceholder}
         >
-          <IconFilter className="h-[18px] w-[18px]" aria-hidden />
+          <IconFilter className="h-[19px] w-[19px]" aria-hidden />
         </button>
         <button
           type="button"
@@ -671,7 +709,7 @@ export function IslandMapClient() {
           title="Center on me"
           onClick={centerMapOnPlayer}
         >
-          <IconLocate className="h-[18px] w-[18px]" aria-hidden />
+          <IconLocate className="h-[19px] w-[19px]" aria-hidden />
         </button>
         <button
           type="button"
@@ -680,7 +718,7 @@ export function IslandMapClient() {
           title="Search new area"
           onClick={onSearchNewArea}
         >
-          <IconRefreshArea className="h-[18px] w-[18px]" aria-hidden />
+          <IconRefreshArea className="h-[19px] w-[19px]" aria-hidden />
         </button>
         <button
           type="button"
@@ -689,7 +727,7 @@ export function IslandMapClient() {
           title="Map tips"
           onClick={() => setInfoOpen(true)}
         >
-          <IconInfo className="h-[18px] w-[18px]" aria-hidden />
+          <IconInfo className="h-[19px] w-[19px]" aria-hidden />
         </button>
       </div>
 
@@ -706,9 +744,9 @@ export function IslandMapClient() {
 
       {/* Compass — fixed above bottom dock; bearing always from userPos to target */}
       {compassHudVisible && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(3.85rem+env(safe-area-inset-bottom,0px))] z-[10040] flex flex-col items-center px-3">
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4.05rem+env(safe-area-inset-bottom,0px))] z-[10040] flex flex-col items-center px-3">
           <div className="pointer-events-auto flex w-full max-w-lg flex-col items-center pb-1">
-            <p className="mb-2 max-w-[min(92vw,360px)] rounded-full border border-amber-400/35 bg-black/82 px-4 py-2 text-center text-[12px] font-semibold leading-snug text-[#fff7e8] shadow-[0_4px_20px_rgba(0,0,0,0.75)] backdrop-blur-md ring-1 ring-amber-500/25">
+            <p className="mb-2.5 max-w-[min(92vw,380px)] rounded-2xl border border-amber-500/30 bg-black/92 px-5 py-2.5 text-center text-[13px] font-semibold leading-snug text-[#f5ecd8] shadow-[0_6px_28px_rgba(0,0,0,0.85),0_2px_12px_rgba(251,191,36,0.15)] backdrop-blur-xl ring-1 ring-amber-400/25">
               {compassLabel}
             </p>
 
@@ -722,21 +760,21 @@ export function IslandMapClient() {
                 ×
               </button>
 
-              <div className="relative mx-auto size-[min(44vw,170px)] shadow-[0_8px_40px_rgba(251,191,36,0.28),0_6px_28px_rgba(234,88,12,0.22),0_4px_20px_rgba(0,0,0,0.55)] sm:size-[195px]">
+              <div className="island-map-compass-stack relative mx-auto size-[min(44vw,187px)] sm:size-[214px]">
                 <Image
                   src="/map-ui/compass-base.png"
                   alt=""
                   fill
-                  sizes="200px"
-                  className="pointer-events-none object-contain object-center"
+                  sizes="220px"
+                  className="pointer-events-none object-contain object-center drop-shadow-[0_10px_28px_rgba(0,0,0,0.55)]"
                   priority
                 />
                 <Image
                   src="/map-ui/compass-dial.png"
                   alt=""
                   fill
-                  sizes="200px"
-                  className="pointer-events-none object-contain object-center"
+                  sizes="220px"
+                  className="pointer-events-none object-contain object-center drop-shadow-[0_10px_28px_rgba(0,0,0,0.55)] drop-shadow-[0_4px_14px_rgba(251,191,36,0.22)]"
                   style={{
                     transform: `rotate(${displayRotation}deg)`,
                     transformOrigin: "center center",
@@ -753,16 +791,18 @@ export function IslandMapClient() {
       {/* Bottom dock — always above map + Leaflet attribution */}
       <Link
         href="/play"
-        className="pointer-events-auto fixed bottom-0 left-0 right-0 z-[10050] flex justify-center border-t border-amber-400/45 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 text-center text-sm font-extrabold uppercase tracking-wide text-[#1a0f08] shadow-[0_-8px_32px_rgba(234,88,12,0.45)] ring-1 ring-inset ring-amber-300/40 transition hover:brightness-[1.03] active:brightness-[0.98]"
+        className="pointer-events-auto fixed bottom-0 left-0 right-0 z-[10060] flex justify-center rounded-t-2xl border border-b-0 border-amber-400/45 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-4 pb-[max(0.65rem,env(safe-area-inset-bottom))] pt-2.5 text-center text-[13px] font-extrabold uppercase tracking-wide text-[#160c06] shadow-[0_-12px_40px_rgba(0,0,0,0.5),0_-6px_28px_rgba(234,88,12,0.48),inset_0_1px_0_rgba(255,255,255,0.22)] ring-1 ring-inset ring-amber-200/35 transition hover:brightness-[1.03] active:brightness-[0.98]"
       >
-        <span className="max-w-lg drop-shadow-sm">Back to Dashboard</span>
+        <span className="max-w-lg drop-shadow-[0_1px_0_rgba(255,255,255,0.35)]">
+          Back to Dashboard
+        </span>
       </Link>
 
       {!compassHudVisible && (
         <button
           type="button"
           onClick={() => setCompassHudVisible(true)}
-          className="pointer-events-auto fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-3 z-[10045] flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-amber-500/45 bg-black/80 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.28)] backdrop-blur-md transition hover:border-amber-300/60 hover:shadow-[0_0_22px_rgba(251,191,36,0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 active:scale-95"
+          className="pointer-events-auto fixed bottom-[calc(4.65rem+env(safe-area-inset-bottom,0px))] right-3 z-[10055] flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-amber-500/45 bg-black/80 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.28)] backdrop-blur-md transition hover:border-amber-300/60 hover:shadow-[0_0_22px_rgba(251,191,36,0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 active:scale-95"
           aria-label="Show compass"
           title="Show compass"
         >
@@ -794,8 +834,8 @@ export function IslandMapClient() {
               Island map
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-teal-100/85">
-              Walk closer to items. Tap markers when nearby to collect resources.
-              Tap an item to make the compass point to it.
+              Walk closer to items. Tap a marker to select it and open details;
+              use Collect in the popup when you are within range.
             </p>
           </div>
         </div>
@@ -818,7 +858,7 @@ export function IslandMapClient() {
 
       {toast && (
         <div
-          className={`pointer-events-none fixed left-1/2 z-[10060] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-xl border border-teal-500/40 bg-[#0a1210]/95 px-4 py-2.5 text-center text-xs font-medium leading-snug text-[#f5f0e6] shadow-[0_0_28px_rgba(20,184,166,0.2)] ${toastBottomClass}`}
+          className={`pointer-events-none fixed left-1/2 z-[10070] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-xl border border-teal-500/40 bg-[#0a1210]/95 px-4 py-2.5 text-center text-xs font-medium leading-snug text-[#f5f0e6] shadow-[0_0_28px_rgba(20,184,166,0.2)] ${toastBottomClass}`}
           role="status"
         >
           {toast}
