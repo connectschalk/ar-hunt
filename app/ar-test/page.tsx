@@ -16,7 +16,9 @@ const UNLOCK_RADIUS_METERS = 5000;
 // -----------------------------------------------------------------------------
 // GLB — must match `public/character.glb` → URL `/character.glb`
 // -----------------------------------------------------------------------------
-const CHARACTER_MODEL_SRC = "/character.glb";
+/** TEMP: remote GLB to isolate asset vs pipeline issues. Restore `/character.glb` when done. */
+const CHARACTER_MODEL_SRC =
+  "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
 const CHARACTER_MODEL_ASSET_ID = "characterModel";
 
 /** GPS mode: model at anchor */
@@ -209,7 +211,7 @@ function applyArJsVideoLayering(sceneEl: HTMLElement, _hostEl: HTMLElement) {
     cs.setProperty("width", "100vw");
     cs.setProperty("height", "100vh");
     cs.setProperty("z-index", "2");
-    cs.setProperty("pointer-events", "auto");
+    cs.setProperty("pointer-events", "none");
     cs.setProperty("background", "transparent");
   });
 }
@@ -1335,14 +1337,18 @@ export default function ArTestPage() {
 
       <div
         ref={sceneHostRef}
-        className={`fixed inset-0 z-10 h-full w-full ${
+        className={`fixed inset-0 z-[1] h-full w-full ${
           showArHud && !rawCameraMode ? "block" : "pointer-events-none invisible"
         } ${phase === "ar" && !rawCameraMode ? "bg-transparent" : ""}`}
+        style={{ pointerEvents: showArHud && !rawCameraMode ? "none" : undefined }}
         aria-hidden={!showArHud || rawCameraMode}
       />
 
       {showArHud && (
-        <div className="pointer-events-auto fixed left-2 right-2 top-2 z-40 max-h-[50vh] overflow-y-auto rounded-lg border border-zinc-700 bg-black/85 p-3 text-[11px] leading-snug text-zinc-200 shadow-xl backdrop-blur-sm sm:left-auto sm:right-3 sm:max-w-sm">
+        <div
+          className="fixed left-4 right-4 top-[max(12px,env(safe-area-inset-top))] max-h-[45vh] overflow-y-auto rounded-lg border border-zinc-700 bg-black/90 p-3 text-[11px] leading-snug text-zinc-200 shadow-xl backdrop-blur-sm sm:left-auto sm:right-4 sm:max-w-sm"
+          style={{ zIndex: 999998, pointerEvents: "auto" }}
+        >
           <p className="font-semibold text-white">AR debug</p>
           <ul className="mt-2 space-y-1 font-mono text-[10px] text-zinc-300">
             <li>
@@ -1452,9 +1458,15 @@ export default function ArTestPage() {
 
       {showArHud && (
         <div
-          className="pointer-events-auto fixed inset-x-0 bottom-0 z-[100] border-t border-zinc-800 bg-black/90 px-4 pt-3 shadow-[0_-8px_32px_rgba(0,0,0,0.6)] backdrop-blur-md"
+          className="fixed border-t border-zinc-800 bg-black/95 px-4 pt-3 shadow-[0_-8px_32px_rgba(0,0,0,0.6)] backdrop-blur-md"
           style={{
-            paddingBottom: "max(12px, env(safe-area-inset-bottom, 12px))",
+            position: "fixed",
+            left: 16,
+            right: 16,
+            bottom: "max(20px, env(safe-area-inset-bottom))",
+            zIndex: 999999,
+            pointerEvents: "auto",
+            paddingBottom: 8,
           }}
         >
           <p className="mb-3 text-center text-[11px] leading-snug text-zinc-400">
@@ -1522,6 +1534,39 @@ export default function ArTestPage() {
             )}
           </div>
         </div>
+      )}
+
+      {showArHud && (
+        <>
+          <button
+            type="button"
+            onClick={() => void showBigDiagnosticModel()}
+            className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white shadow-lg"
+            style={{
+              position: "fixed",
+              top: 90,
+              right: 16,
+              zIndex: 1000000,
+              pointerEvents: "auto",
+            }}
+          >
+            DIAGNOSTIC
+          </button>
+          <button
+            type="button"
+            onClick={restart}
+            className="rounded-lg bg-zinc-200 px-3 py-2 text-xs font-bold text-black shadow-lg"
+            style={{
+              position: "fixed",
+              top: 150,
+              right: 16,
+              zIndex: 1000000,
+              pointerEvents: "auto",
+            }}
+          >
+            RESTART
+          </button>
+        </>
       )}
     </div>
   );
