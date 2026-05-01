@@ -27,10 +27,13 @@ const COLLECT_LABEL_POSITION = "0 2 0";
 const COLLECT_LABEL_SCALE = "5 5 5";
 const COLLECT_LABEL_COLOR = "#FFFFFF";
 
-/** Test mode: model parented in front of camera */
+/** Test mode: rig in front of camera (no GPS anchoring) */
 const TEST_MODEL_ANCHOR_POSITION = "0 0 -4";
-const TEST_MODEL_SCALE = "0.5 0.5 0.5";
+const TEST_MODEL_SCALE = "2 2 2";
 const TEST_MODEL_ROTATION = "0 180 0";
+/** Applied to fallback sphere in test mode (large + bright) */
+const TEST_SPHERE_SCALE = "2 2 2";
+const TEST_FALLBACK_SPHERE_RADIUS = "2";
 
 const MODEL_LOAD_TIMEOUT_MS = 10_000;
 /** If `scene` never fires `loaded` (common on some mobile WebKit builds), still show AR */
@@ -142,6 +145,11 @@ export default function ArTestPage() {
   const [arPrepShowDetail, setArPrepShowDetail] = useState(false);
 
   const sceneHostRef = useRef<HTMLDivElement | null>(null);
+  /** Set when `mountScene("test")` builds camera-relative rig (for “Show fallback sphere”) */
+  const testSceneElsRef = useRef<{
+    modelEntity: HTMLElement;
+    sphere: HTMLElement;
+  } | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const scriptsPromiseRef = useRef<Promise<void> | null>(null);
   const distanceRef = useRef<number>(Infinity);
@@ -182,6 +190,7 @@ export default function ArTestPage() {
 
   const destroyScene = useCallback(() => {
     clearCameraTimeout();
+    testSceneElsRef.current = null;
     const host = sceneHostRef.current;
     if (host) {
       host.innerHTML = "";
@@ -289,13 +298,19 @@ export default function ArTestPage() {
       modelEntity.setAttribute("visible", "true");
 
       const sphere = document.createElement("a-sphere");
-      sphere.setAttribute("radius", "2");
+      sphere.setAttribute(
+        "radius",
+        mode === "test" ? TEST_FALLBACK_SPHERE_RADIUS : "2",
+      );
       sphere.setAttribute(
         "material",
-        "color: #22ffc8; metalness: 0.2; roughness: 0.35; emissive: #004433; emissiveIntensity: 0.35",
+        "color: #22ffc8; metalness: 0.2; roughness: 0.35; emissive: #004433; emissiveIntensity: 0.5",
       );
       sphere.setAttribute("class", "clickable");
       sphere.setAttribute("visible", "false");
+      if (mode === "test") {
+        sphere.setAttribute("scale", TEST_SPHERE_SCALE);
+      }
       if (mode === "gps") {
         sphere.setAttribute("gps-entity-place", gpsPlace);
         sphere.setAttribute("position", CHARACTER_MODEL_POSITION);
@@ -319,13 +334,16 @@ export default function ArTestPage() {
       sphere.addEventListener("click", onCollectClick);
 
       if (mode === "test") {
-        const testRoot = document.createElement("a-entity");
-        testRoot.setAttribute("position", TEST_MODEL_ANCHOR_POSITION);
-        testRoot.appendChild(modelEntity);
+        const rig = document.createElement("a-entity");
+        rig.setAttribute("position", TEST_MODEL_ANCHOR_POSITION);
+        rig.setAttribute("id", "camera-space-rig");
+        modelEntity.setAttribute("position", "0 0 0");
         sphere.setAttribute("position", "0 0 0");
-        testRoot.appendChild(sphere);
-        testRoot.appendChild(label);
-        camera.appendChild(testRoot);
+        rig.appendChild(modelEntity);
+        rig.appendChild(sphere);
+        rig.appendChild(label);
+        camera.appendChild(rig);
+        testSceneElsRef.current = { modelEntity, sphere };
       }
 
       let modelLoadSettled = false;
@@ -343,6 +361,10 @@ export default function ArTestPage() {
         });
         modelEntity.setAttribute("visible", "false");
         sphere.setAttribute("visible", "true");
+        if (mode === "test") {
+          sphere.setAttribute("position", "0 0 0");
+          sphere.setAttribute("scale", TEST_SPHERE_SCALE);
+        }
       };
 
       fallbackTimer = window.setTimeout(() => {
@@ -511,11 +533,33 @@ export default function ArTestPage() {
       ...initialArDebug,
       modeLabel: "Test mode",
       gpsAnchor: "off",
-      camera: "ready",
+      camera: "loading",
     });
     patchArDebug({ arScripts: "loading" });
     try {
       await ensureArScripts();
+
+      try {
+        console.log("[ar-test] Requesting camera (test mode)");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        stream.getTracks().forEach((t) => t.stop());
+        patchArDebug({ camera: "ready" });
+        console.log("[ar-test] Camera success (test mode)");
+      } catch (camErr) {
+        const detail =
+          camErr instanceof Error
+            ? `${camErr.name}: ${camErr.message}`
+            : String(camErr);
+        console.error("[ar-test] Camera error (test mode)", detail);
+        patchArDebug({ camera: "error" });
+        setCameraErrorDetail(detail);
+        setPhase("error_cam");
+        return;
+      }
+
       mountScene("test");
     } catch (e) {
       console.error("[ar-test] Test mode script load failed", e);
@@ -526,6 +570,26 @@ export default function ArTestPage() {
       );
     }
   }, [destroyScene, ensureArScripts, mountScene, patchArDebug]);
+
+  const showFallbackSphereOnly = useCallback(() => {
+    const els = testSceneElsRef.current;
+    if (!els) {
+      console.warn(
+        "[ar-test] Show fallback sphere: no test rig — tap “Test model in front of me” first",
+      );
+      return;
+    }
+    console.log("[ar-test] Show fallback sphere (manual)");
+    els.modelEntity.setAttribute("visible", "false");
+    els.sphere.setAttribute("visible", "true");
+    els.sphere.setAttribute("position", "0 0 0");
+    els.sphere.setAttribute("scale", TEST_SPHERE_SCALE);
+    patchArDebug({
+      model: "error",
+      modelVisibleError:
+        "Manual: bright sphere at camera rig (0 0 -4), scale 2 2 2.",
+    });
+  }, [patchArDebug]);
 
   const clearWatch = useCallback(() => {
     if (watchIdRef.current !== null) {
@@ -951,30 +1015,43 @@ export default function ArTestPage() {
               {arDebug.modelVisibleError}
             </p>
           )}
-          {phase === "ar" && arRenderingMode === "gps" && (
-            <button
-              type="button"
-              onClick={() => void switchToTestMode()}
-              className="mt-3 w-full rounded-lg bg-white py-3 text-sm font-semibold text-black"
-            >
-              Test model in front of me
-            </button>
-          )}
         </div>
       )}
 
-      {phase === "ar" && arRenderingMode === "gps" && (
-        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/80 to-transparent px-4 pb-8 pt-16">
-          <p className="pointer-events-none text-center text-sm text-zinc-300">
-            Walk the marker into view, then tap the model or sphere.
+      {showArHud && (
+        <div
+          className="pointer-events-auto fixed inset-x-0 bottom-0 z-[100] border-t border-zinc-800 bg-black/90 px-4 pt-3 shadow-[0_-8px_32px_rgba(0,0,0,0.6)] backdrop-blur-md"
+          style={{
+            paddingBottom: "max(12px, env(safe-area-inset-bottom, 12px))",
+          }}
+        >
+          <p className="mb-3 text-center text-[11px] leading-snug text-zinc-400">
+            {arRenderingMode === "test"
+              ? "Test mode: GLB or sphere fixed in front of the camera. Tap to collect."
+              : "GPS mode: use the button below to verify rendering without GPS placement."}
           </p>
-        </div>
-      )}
-      {phase === "ar" && arRenderingMode === "test" && (
-        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/80 to-transparent px-4 pb-8 pt-16">
-          <p className="pointer-events-none text-center text-sm text-zinc-300">
-            Test mode: model is fixed in front of the camera. Tap to collect.
-          </p>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => void switchToTestMode()}
+              className="w-full rounded-xl bg-white py-3.5 text-sm font-semibold text-black active:opacity-90"
+            >
+              Test model in front of me
+            </button>
+            <button
+              type="button"
+              onClick={showFallbackSphereOnly}
+              disabled={!(phase === "ar" && arRenderingMode === "test")}
+              title={
+                arRenderingMode === "test"
+                  ? "Hide GLB and show the bright sphere"
+                  : "Switch to test mode first"
+              }
+              className="w-full rounded-xl border border-zinc-600 bg-zinc-900 py-3.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Show fallback sphere
+            </button>
+          </div>
         </div>
       )}
     </div>
