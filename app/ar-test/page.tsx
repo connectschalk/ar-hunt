@@ -6,10 +6,10 @@ import { flushSync } from "react-dom";
 // -----------------------------------------------------------------------------
 // Hunt configuration — change these values for your deployment / playtests
 // -----------------------------------------------------------------------------
-/** Target latitude (decimal degrees, WGS84) */
-const TARGET_LATITUDE = -33.741074;
-/** Target longitude (decimal degrees, WGS84) */
-const TARGET_LONGITUDE = 18.963577;
+/** Target latitude (decimal degrees, WGS84) — S 33° 44′ 27.76″ */
+const TARGET_LATITUDE = -33.741044;
+/** Target longitude (decimal degrees, WGS84) — E 18° 57′ 48.347″ */
+const TARGET_LONGITUDE = 18.96343;
 /** User must be within this radius (meters) before the AR view unlocks */
 const UNLOCK_RADIUS_METERS = 5000;
 
