@@ -314,11 +314,47 @@ export function IslandMapClient() {
     !mapItemsLoading && items.length === 0 && Boolean(userPos);
 
   return (
-    <div className="relative h-[100dvh] w-full overflow-hidden bg-[#050608]">
+    <div className="relative h-[100dvh] w-full overflow-hidden bg-[#1a120d]">
       <div
         ref={mapDivRef}
-        className="absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/50 [&_.leaflet-control-attribution]:text-zinc-400 [&_.map-item-marker-icon]:drop-shadow-[0_2px_8px_rgba(0,0,0,0.55)]"
+        className="treasure-map-leaflet absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/50 [&_.leaflet-control-attribution]:text-zinc-400 [&_.leaflet-marker-pane_img]:drop-shadow-[0_3px_14px_rgba(0,0,0,0.75)] [&_.map-item-marker-icon]:drop-shadow-[0_3px_14px_rgba(0,0,0,0.72)] [&_.map-item-marker-icon]:contrast-[1.08]"
       />
+
+      {/* Decorative compass — visual only; sits above map frame, below HUD */}
+      <div
+        className="pointer-events-none absolute bottom-20 right-3 z-[999] h-14 w-14 opacity-[0.78] sm:bottom-7 sm:right-4 sm:h-16 sm:w-16"
+        aria-hidden
+      >
+        <svg viewBox="0 0 64 64" className="h-full w-full text-amber-200/90 drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
+          <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.85" />
+          <circle cx="32" cy="32" r="26" fill="rgba(20,12,8,0.35)" stroke="currentColor" strokeWidth="0.75" opacity="0.6" />
+          <text x="32" y="15" textAnchor="middle" fill="currentColor" fontSize="11" fontWeight="700" fontFamily="Georgia, serif">
+            N
+          </text>
+          <text x="51" y="37" textAnchor="middle" fill="currentColor" fontSize="10" fontFamily="Georgia, serif">
+            E
+          </text>
+          <text x="32" y="55" textAnchor="middle" fill="currentColor" fontSize="10" fontFamily="Georgia, serif">
+            S
+          </text>
+          <text x="13" y="37" textAnchor="middle" fill="currentColor" fontSize="10" fontFamily="Georgia, serif">
+            W
+          </text>
+          <path
+            d="M32 12 L36 32 L32 28 L28 32 Z"
+            fill="rgba(251,191,36,0.95)"
+            stroke="rgba(62,38,18,0.9)"
+            strokeWidth="0.5"
+          />
+          <path
+            d="M32 52 L36 32 L32 36 L28 32 Z"
+            fill="rgba(71,85,105,0.85)"
+            stroke="rgba(62,38,18,0.85)"
+            strokeWidth="0.5"
+          />
+          <circle cx="32" cy="32" r="3" fill="rgba(251,191,36,0.95)" stroke="rgba(45,28,12,0.9)" strokeWidth="0.75" />
+        </svg>
+      </div>
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col gap-3 p-3 sm:p-4">
         <div className="pointer-events-auto flex flex-wrap items-start justify-between gap-2">

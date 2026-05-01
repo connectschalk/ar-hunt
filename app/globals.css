@@ -22,3 +22,42 @@ body {
   color: var(--survivor-cream);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+
+/* --- Island map: treasure-map treatment (tiles only; markers/player stay crisp) --- */
+.treasure-map-leaflet .leaflet-tile-pane img {
+  filter: sepia(38%) saturate(82%) brightness(1.03) contrast(1.05);
+}
+
+.treasure-map-leaflet .leaflet-tile-pane {
+  position: relative;
+}
+
+.treasure-map-leaflet .leaflet-tile-pane::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  mix-blend-mode: multiply;
+  opacity: 0.72;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E"),
+    linear-gradient(
+      155deg,
+      rgba(222, 184, 135, 0.22) 0%,
+      rgba(139, 90, 43, 0.18) 45%,
+      rgba(74, 48, 24, 0.26) 100%
+    ),
+    radial-gradient(
+      ellipse at center,
+      transparent 38%,
+      rgba(38, 24, 10, 0.42) 100%
+    );
+}
+
+/* Player circle marker (SVG) — extra glow so it stays visible on sepia tiles */
+.treasure-map-leaflet .leaflet-overlay-pane svg path,
+.treasure-map-leaflet .leaflet-overlay-pane svg circle {
+  filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.95))
+    drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+}
