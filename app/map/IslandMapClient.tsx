@@ -5,6 +5,7 @@ import Image from "next/image";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -320,36 +321,48 @@ export function IslandMapClient() {
   }, [compassTargetItem, userPos, manualCompassTargetId, items]);
 
   /**
-   * Bearing from blue-dot position to target spawn (recalculates every GPS tick).
-   * Target = manual selection, else closest item; clears when collected / new search.
+   * True bearing from user (blue dot) → target spawn, degrees clockwise from north.
+   * Primitive deps so this updates every GPS fix and when the target moves or changes.
    */
-  const needleRotation = useMemo(() => {
-    if (!userPos || !compassTargetItem) return 0;
-    return (
-      calculateBearing(
-        userPos.lat,
-        userPos.lng,
-        compassTargetItem.lat,
-        compassTargetItem.lng,
-      ) + NEEDLE_ASSET_OFFSET
+  const needleRotationDeg = useMemo(() => {
+    if (!userPos || !compassTargetItem) return null;
+    const bearing = calculateBearing(
+      userPos.lat,
+      userPos.lng,
+      compassTargetItem.lat,
+      compassTargetItem.lng,
     );
-  }, [userPos, compassTargetItem]);
+    return bearing + NEEDLE_ASSET_OFFSET;
+  }, [
+    userPos?.lat,
+    userPos?.lng,
+    compassTargetItem?.id,
+    compassTargetItem?.lat,
+    compassTargetItem?.lng,
+  ]);
 
-  /** Smooth display angle — shortest path from previous frame (no long spins). */
-  let displayRotation = 0;
-  if (!userPos || !compassTargetItem) {
-    displayRotation = 0;
-    prevRotationRef.current = null;
-  } else if (prevRotationRef.current === null) {
-    displayRotation = normalizeDeg(needleRotation);
-    prevRotationRef.current = displayRotation;
-  } else {
-    displayRotation = getShortestRotation(
+  const [displayRotation, setDisplayRotation] = useState(0);
+
+  /** Smooth shortest-path rotation; runs after paint with fresh bearing (no render-phase ref drift). */
+  useLayoutEffect(() => {
+    if (needleRotationDeg === null) {
+      prevRotationRef.current = null;
+      setDisplayRotation(0);
+      return;
+    }
+    if (prevRotationRef.current === null) {
+      const initial = normalizeDeg(needleRotationDeg);
+      prevRotationRef.current = initial;
+      setDisplayRotation(initial);
+      return;
+    }
+    const next = getShortestRotation(
       prevRotationRef.current,
-      needleRotation,
+      needleRotationDeg,
     );
-    prevRotationRef.current = displayRotation;
-  }
+    prevRotationRef.current = next;
+    setDisplayRotation(next);
+  }, [needleRotationDeg]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -614,70 +627,70 @@ export function IslandMapClient() {
         className="treasure-map-leaflet absolute inset-0 z-0 h-full w-full [&_.leaflet-control-attribution]:z-[500] [&_.leaflet-control-attribution]:text-[10px] [&_.leaflet-control-attribution]:bg-black/45 [&_.leaflet-control-attribution]:text-zinc-400 [&_.leaflet-marker-pane_img]:drop-shadow-[0_3px_12px_rgba(0,0,0,0.65)]"
       />
 
-      {/* Top HUD — amber/fire strip (matches bottom dock) */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[10000] px-2 pt-[env(safe-area-inset-top)] sm:px-3">
-        <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-b-2xl border border-amber-400/25 border-t-0 bg-gradient-to-r from-amber-950/92 via-orange-900/82 to-black/85 px-3 py-3.5 shadow-[0_8px_28px_rgba(0,0,0,0.45),0_4px_18px_rgba(234,88,12,0.28),inset_0_-1px_0_rgba(251,191,36,0.12)] backdrop-blur-xl ring-1 ring-inset ring-amber-300/20">
+      {/* Top HUD — same gradient as Back to Dashboard (full width, rounded bottom) */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[10000] pt-[env(safe-area-inset-top)]">
+        <div className="pointer-events-auto flex w-full items-center justify-between gap-2 rounded-b-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-3 py-2.5 shadow-lg ring-1 ring-inset ring-amber-200/35">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-amber-400/45 bg-gradient-to-br from-amber-900/55 via-black to-orange-950/75 text-[14px] font-bold text-amber-50 shadow-[0_0_22px_rgba(251,191,36,0.35)] ring-1 ring-amber-400/35"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#160c06]/25 bg-black/15 text-[15px] font-bold text-[#160c06]"
               aria-hidden
             >
               SG
             </div>
             <div className="min-w-0 leading-tight">
-              <p className="truncate text-[14px] font-bold tracking-wide text-amber-50 drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]">
+              <p className="truncate text-[15px] font-bold tracking-wide text-[#160c06] drop-shadow-[0_1px_0_rgba(255,255,255,0.35)]">
                 Survivor
               </p>
-              <p className="mt-0.5 text-[13px] tabular-nums text-amber-100/92">
-                L<span className="font-bold text-amber-200">{game.level}</span>
-                <span className="mx-2 text-amber-700/45">·</span>
-                <span className="font-semibold text-[#fdf6e8]">
+              <p className="mt-0.5 text-[14px] tabular-nums text-[#160c06]/95">
+                L<span className="font-bold">{game.level}</span>
+                <span className="mx-2 text-[#160c06]/45">·</span>
+                <span className="font-semibold">
                   Energy {game.energy}
                 </span>
               </p>
             </div>
             <div
-              className="hidden h-9 max-w-[76px] flex-1 overflow-hidden rounded-full bg-black/55 ring-1 ring-amber-600/35 sm:block"
+              className="hidden h-9 max-w-[76px] flex-1 overflow-hidden rounded-full bg-black/20 sm:block"
               title="XP progress"
               aria-hidden
             >
               <div
-                className="h-full rounded-full bg-gradient-to-r from-teal-600 to-amber-500 transition-[width] duration-300"
+                className="h-full rounded-full bg-gradient-to-r from-teal-700 to-amber-600 transition-[width] duration-300"
                 style={{ width: `${xpPct}%` }}
               />
             </div>
           </div>
           <div
-            className="flex shrink-0 items-center gap-3.5 text-[13px] font-semibold tabular-nums text-amber-50"
+            className="flex shrink-0 items-center gap-3.5 text-[14px] font-semibold tabular-nums text-[#160c06]"
             title="Coins · Idols · Clues"
           >
-            <span className="flex items-center gap-1.5">
+            <span className="map-hud-resource-icon flex items-center gap-1.5">
               <Image
                 src="/map-icons/coin.png"
                 alt=""
-                width={28}
-                height={28}
-                className="h-7 w-7 object-contain drop-shadow-[0_2px_10px_rgba(251,191,36,0.5)]"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain"
               />
               {game.coins}
             </span>
-            <span className="flex items-center gap-1.5">
+            <span className="map-hud-resource-icon flex items-center gap-1.5">
               <Image
                 src="/map-icons/medical-kit.png"
                 alt=""
-                width={28}
-                height={28}
-                className="h-7 w-7 object-contain drop-shadow-[0_2px_10px_rgba(251,191,36,0.45)]"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain"
               />
               {game.idols}
             </span>
-            <span className="flex items-center gap-1.5">
+            <span className="map-hud-resource-icon flex items-center gap-1.5">
               <Image
                 src="/map-icons/compass.png"
                 alt=""
-                width={28}
-                height={28}
-                className="h-7 w-7 object-contain drop-shadow-[0_2px_10px_rgba(251,191,36,0.45)]"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain"
               />
               {game.clues}
             </span>
