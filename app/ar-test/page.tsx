@@ -14,23 +14,22 @@ const TARGET_LONGITUDE = 18.963577;
 const UNLOCK_RADIUS_METERS = 5000;
 
 // -----------------------------------------------------------------------------
-// GLB — must match `public/character.glb` → URL `/character.glb`
+// GLB — place file at `public/astronaut.glb` → URL `/astronaut.glb` (lowercase)
 // -----------------------------------------------------------------------------
-/** TEMP: remote GLB to isolate asset vs pipeline issues. Restore `/character.glb` when done. */
-const CHARACTER_MODEL_SRC =
-  "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
+const CHARACTER_MODEL_SRC = "/astronaut.glb";
 const CHARACTER_MODEL_ASSET_ID = "characterModel";
 
 /** GPS mode: model at anchor */
-const CHARACTER_MODEL_SCALE = "0.5 0.5 0.5";
+const CHARACTER_MODEL_SCALE = "2 2 2";
 const CHARACTER_MODEL_ROTATION = "0 180 0";
 const CHARACTER_MODEL_POSITION = "0 0 0";
 const COLLECT_LABEL_POSITION = "0 2 0";
 const COLLECT_LABEL_SCALE = "5 5 5";
 const COLLECT_LABEL_COLOR = "#FFFFFF";
 
-/** Test mode: rig in front of camera (no GPS anchoring) */
-const TEST_MODEL_ANCHOR_POSITION = "0 0 -4";
+/** Test mode: astronaut in front of camera (no GPS anchoring), matches ar-diagnostic placement */
+const TEST_MODEL_ANCHOR_POSITION = "0 0 0";
+const TEST_MODEL_POSITION = "0 -1 -3";
 const TEST_MODEL_SCALE = "2 2 2";
 const TEST_MODEL_ROTATION = "0 180 0";
 /** Applied to fallback sphere in test mode (large + bright) */
@@ -433,11 +432,13 @@ export default function ArTestPage() {
         label.setAttribute("scale", COLLECT_LABEL_SCALE);
         label.setAttribute("gps-entity-place", gpsPlace);
       } else if (mode === "test") {
+        modelEntity.setAttribute("position", TEST_MODEL_POSITION);
         modelEntity.setAttribute("scale", TEST_MODEL_SCALE);
         modelEntity.setAttribute("rotation", TEST_MODEL_ROTATION);
         sphere.setAttribute("radius", TEST_FALLBACK_SPHERE_RADIUS);
         sphere.setAttribute("visible", "false");
         sphere.setAttribute("scale", TEST_SPHERE_SCALE);
+        sphere.setAttribute("position", TEST_MODEL_POSITION);
         label.setAttribute("position", COLLECT_LABEL_POSITION);
         label.setAttribute("scale", COLLECT_LABEL_SCALE);
       } else {
@@ -484,8 +485,6 @@ export default function ArTestPage() {
         const rig = document.createElement("a-entity");
         rig.setAttribute("position", TEST_MODEL_ANCHOR_POSITION);
         rig.setAttribute("id", "camera-space-rig");
-        modelEntity.setAttribute("position", "0 0 0");
-        sphere.setAttribute("position", "0 0 0");
         rig.appendChild(modelEntity);
         rig.appendChild(sphere);
         rig.appendChild(label);
@@ -530,7 +529,7 @@ export default function ArTestPage() {
         modelEntity.setAttribute("visible", "false");
         sphere.setAttribute("visible", "true");
         if (mode === "test") {
-          sphere.setAttribute("position", "0 0 0");
+          sphere.setAttribute("position", TEST_MODEL_POSITION);
           sphere.setAttribute("scale", TEST_SPHERE_SCALE);
         }
       };
@@ -877,12 +876,12 @@ export default function ArTestPage() {
           "Manual: sphere only at (1, 0, -3), scale 2 — red box still visible.",
       });
     } else {
-      els.sphere.setAttribute("position", "0 0 0");
+      els.sphere.setAttribute("position", TEST_MODEL_POSITION);
       els.sphere.setAttribute("scale", TEST_SPHERE_SCALE);
       patchArDebug({
         model: "error",
         modelVisibleError:
-          "Manual: bright sphere at camera rig (0 0 -4), scale 2 2 2.",
+          `Manual: bright sphere at (${TEST_MODEL_POSITION}), scale ${TEST_SPHERE_SCALE}.`,
       });
     }
   }, [arRenderingMode, patchArDebug]);
