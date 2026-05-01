@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/app/components/AuthProvider";
 import "./globals.css";
@@ -19,6 +19,14 @@ export const metadata: Metadata = {
     template: "%s · Survivor GO",
   },
   description: "Explore. Collect. Compete.",
+  icons: {
+    icon: [{ url: "/favicon.ico" }],
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
