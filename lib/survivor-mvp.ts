@@ -287,6 +287,13 @@ function synthesizeBagFromTotals(g: GameState): BagItem[] {
 }
 
 export const TRIBE_STORAGE_KEY = "survivor-go-tribe-name";
+export const TRIBE_ID_STORAGE_KEY = "survivor-go-tribe-id";
+
+/** Dispatched when tribe name/id in localStorage changes (any source). */
+export function notifyTribeStorageUpdated(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("survivor-go-tribe-updated"));
+}
 
 export function loadGameState(): GameState {
   if (typeof window === "undefined") return { ...DEFAULT_GAME_STATE };
@@ -385,9 +392,38 @@ export function loadTribeName(): string | null {
   }
 }
 
+/** Device-only tribe label; clears any synced Supabase tribe id. */
 export function saveTribeName(name: string): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(TRIBE_STORAGE_KEY, name.trim());
+  try {
+    window.localStorage.setItem(TRIBE_STORAGE_KEY, name.trim());
+    window.localStorage.removeItem(TRIBE_ID_STORAGE_KEY);
+    notifyTribeStorageUpdated();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Persist tribe label and Supabase tribe id (logged-in / cloud sync). */
+export function saveTribeToDevice(name: string, tribeId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TRIBE_STORAGE_KEY, name.trim());
+    window.localStorage.setItem(TRIBE_ID_STORAGE_KEY, tribeId);
+    notifyTribeStorageUpdated();
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadTribeId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const v = window.localStorage.getItem(TRIBE_ID_STORAGE_KEY);
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 export const EXPLORE_COST = 5;

@@ -8,6 +8,14 @@ export type DashboardModalId =
   | "bag"
   | "achievements";
 
+/** Icon paths for dashboard modals (keep in sync with grid buttons). */
+export const DASHBOARD_MODAL_ICON_SRC: Record<DashboardModalId, string> = {
+  progress: "/dashboard-icons/progress.png",
+  status: "/dashboard-icons/status.png",
+  bag: "/dashboard-icons/bag.png",
+  achievements: "/dashboard-icons/achievements.png",
+};
+
 const ACTIONS: {
   id: DashboardModalId;
   src: string;
@@ -15,18 +23,18 @@ const ACTIONS: {
 }[] = [
   {
     id: "progress",
-    src: "/dashboard-icons/progress.png",
+    src: DASHBOARD_MODAL_ICON_SRC.progress,
     label: "Player Progress",
   },
   {
     id: "status",
-    src: "/dashboard-icons/status.png",
+    src: DASHBOARD_MODAL_ICON_SRC.status,
     label: "Survivor Status",
   },
-  { id: "bag", src: "/dashboard-icons/bag.png", label: "Bag Inventory" },
+  { id: "bag", src: DASHBOARD_MODAL_ICON_SRC.bag, label: "Bag Inventory" },
   {
     id: "achievements",
-    src: "/dashboard-icons/achievements.png",
+    src: DASHBOARD_MODAL_ICON_SRC.achievements,
     label: "Achievements",
   },
 ];

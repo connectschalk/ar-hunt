@@ -12,13 +12,13 @@ export const metadata: Metadata = {
 export default function Home() {
   return (
     <div className={survivorPageBg}>
-      <main className="flex flex-1 flex-col items-center justify-center px-6 py-12 pb-28">
+      <main className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-40 pt-10 sm:pb-44 sm:pt-12">
         <div className="flex max-w-md flex-col items-center text-center">
           <h1 className="sr-only">Survivor GO</h1>
           <p className="text-xs font-medium uppercase tracking-[0.35em] text-amber-300/80">
             Welcome
           </p>
-          <div className="relative mt-6 w-full max-w-[min(100%,320px)] sm:max-w-[380px]">
+          <div className="relative mt-3 w-full max-w-[min(100%,320px)] sm:max-w-[380px]">
             <Image
               src="/survivor-go-logo.png"
               alt="Survivor GO!"
@@ -28,11 +28,11 @@ export default function Home() {
               className="h-auto w-full drop-shadow-[0_0_40px_rgba(251,191,36,0.18),0_16px_48px_rgba(0,0,0,0.55)]"
             />
           </div>
-          <p className="mt-8 text-lg text-[#f5f0e6]/90 sm:text-xl">
+          <p className="mt-3 text-lg text-[#f5f0e6]/90 sm:text-xl">
             Explore. Collect. Compete.
           </p>
         </div>
-        <div className="mt-14 flex w-full max-w-sm flex-col gap-3">
+        <div className="mt-10 flex w-full max-w-sm flex-col gap-3 sm:mt-12">
           <Link href="/play" className={`flex h-14 items-center justify-center ${btnPrimary}`}>
             Start Game
           </Link>

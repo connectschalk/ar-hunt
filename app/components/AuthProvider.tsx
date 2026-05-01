@@ -12,6 +12,7 @@ import type { User } from "@supabase/supabase-js";
 import { resetCloudSaveStatusForLogout } from "@/lib/cloud-save-status";
 import { createBrowserClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { runSessionPlayerStateSync } from "@/lib/supabase/player-state";
+import { hydrateLocalTribeFromSupabase } from "@/lib/supabase/tribes";
 
 type AuthContextValue = {
   user: User | null;
@@ -65,6 +66,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!configured || !user?.id) return;
     void runSessionPlayerStateSync(user.id);
+  }, [configured, user?.id]);
+
+  useEffect(() => {
+    if (!configured || !user?.id) return;
+    void hydrateLocalTribeFromSupabase(user.id);
   }, [configured, user?.id]);
 
   const value = useMemo(

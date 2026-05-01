@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/app/components/AuthProvider";
 import {
   DashboardActionGrid,
+  DASHBOARD_MODAL_ICON_SRC,
   type DashboardModalId,
 } from "@/app/components/DashboardActionGrid";
 import { PlayerBag } from "@/app/components/PlayerBag";
@@ -38,6 +39,7 @@ import {
   DEFAULT_GAME_STATE,
   EXPLORE_COST,
   loadGameState,
+  loadTribeId,
   loadTribeName,
   randomFind,
   saveGameState,
@@ -67,6 +69,7 @@ export function PlayDashboard() {
   const [game, setGame] = useState<GameState>(DEFAULT_GAME_STATE);
   const [hydrated, setHydrated] = useState(false);
   const [tribeName, setTribeName] = useState<string | null>(null);
+  const [tribeCloudId, setTribeCloudId] = useState<string | null>(null);
   const [lastFind, setLastFind] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<CloudSaveUiStatus>("local");
   const [modal, setModal] = useState<DashboardModalId | null>(null);
@@ -79,14 +82,29 @@ export function PlayDashboard() {
     return () => window.removeEventListener("survivor-go-game-merged", onMerged);
   }, []);
 
+  const refreshTribeDisplay = useCallback(() => {
+    setTribeName(loadTribeName());
+    setTribeCloudId(loadTribeId());
+  }, []);
+
   useEffect(() => {
     const raw = loadGameState();
     const withStreak = applyDailyStreakOnPlay(raw);
     saveGameState(withStreak);
     setGame(loadGameState());
-    setTribeName(loadTribeName());
+    refreshTribeDisplay();
     setHydrated(true);
-  }, []);
+  }, [refreshTribeDisplay]);
+
+  useEffect(() => {
+    const onTribe = () => refreshTribeDisplay();
+    window.addEventListener("survivor-go-tribe-updated", onTribe);
+    return () => window.removeEventListener("survivor-go-tribe-updated", onTribe);
+  }, [refreshTribeDisplay]);
+
+  useEffect(() => {
+    if (!authLoading) refreshTribeDisplay();
+  }, [authLoading, authUser?.id, refreshTribeDisplay]);
 
   const persist = useCallback((next: GameState) => {
     setGame(next);
@@ -198,6 +216,11 @@ export function PlayDashboard() {
               You&apos;re aligned with{" "}
               <span className="font-semibold text-amber-200">{tribeName}</span>
               .{" "}
+              {authUser && tribeCloudId ? (
+                <span className="text-teal-200/55">Online tribe. </span>
+              ) : !authUser ? (
+                <span className="text-teal-200/55">On this device. </span>
+              ) : null}
               <Link href="/join" className={linkTeal}>
                 Change
               </Link>
@@ -220,6 +243,9 @@ export function PlayDashboard() {
         open={modal !== null}
         onClose={() => setModal(null)}
         title={modal !== null ? MODAL_TITLES[modal] : "Survivor GO"}
+        iconSrc={
+          modal !== null ? DASHBOARD_MODAL_ICON_SRC[modal] : undefined
+        }
       >
         {modal === "progress" && (
           <div className="space-y-4">
