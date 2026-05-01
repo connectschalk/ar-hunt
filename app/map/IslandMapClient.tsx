@@ -6,12 +6,16 @@ import type { Map as LeafletMap, CircleMarker } from "leaflet";
 import {
   applyMapItemCollect,
   clearPersistedMapState,
+  formatCollectToast,
   generateMapItems,
+  haversineMeters,
   loadPersistedMapState,
+  MAP_COLLECT_RADIUS_M,
   MAP_FALLBACK_LAT,
   MAP_FALLBACK_LNG,
   MAP_ITEMS_TTL_MS,
   MAP_MARKER_STYLES,
+  markerRadiusForRarity,
   savePersistedMapState,
   type MapItem,
 } from "@/lib/map-items";
@@ -26,6 +30,21 @@ function randomSpawnCount(): number {
   return 5 + Math.floor(Math.random() * 6);
 }
 
+function searchNewArea(
+  pos: { lat: number; lng: number },
+  setItems: (items: MapItem[]) => void,
+) {
+  clearPersistedMapState();
+  const generated = generateMapItems(pos.lat, pos.lng, randomSpawnCount());
+  setItems(generated);
+  savePersistedMapState({
+    savedAt: Date.now(),
+    centerLat: pos.lat,
+    centerLng: pos.lng,
+    items: generated,
+  });
+}
+
 export function IslandMapClient() {
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(
     null,
@@ -35,6 +54,7 @@ export function IslandMapClient() {
   const [items, setItems] = useState<MapItem[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [mapItemsLoading, setMapItemsLoading] = useState(true);
 
   const mapDivRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -42,6 +62,7 @@ export function IslandMapClient() {
   const itemsForMapRef = useRef<MapItem[]>([]);
   const userPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const collectHandlerRef = useRef<(item: MapItem) => void>(() => {});
+  const itemsSeededRef = useRef(false);
 
   useEffect(() => {
     userPosRef.current = userPos;
@@ -61,7 +82,7 @@ export function IslandMapClient() {
       setLocationNote("Location access improves gameplay");
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         setUserPos({
           lat: pos.coords.latitude,
@@ -73,12 +94,18 @@ export function IslandMapClient() {
         setUserPos({ lat: MAP_FALLBACK_LAT, lng: MAP_FALLBACK_LNG });
         setLocationNote("Location access improves gameplay");
       },
-      { enableHighAccuracy: true, maximumAge: 60_000, timeout: 12_000 },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 5000,
+        timeout: 20_000,
+      },
     );
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   useEffect(() => {
-    if (!userPos) return;
+    if (!userPos || itemsSeededRef.current) return;
+    itemsSeededRef.current = true;
     const persisted = loadPersistedMapState();
     const stillFresh =
       persisted &&
@@ -88,28 +115,44 @@ export function IslandMapClient() {
     if (stillFresh) {
       setItems(persisted.items);
     } else {
-      const generated = generateMapItems(
-        userPos.lat,
-        userPos.lng,
-        randomSpawnCount(),
-      );
-      setItems(generated);
-      savePersistedMapState({
-        savedAt: Date.now(),
-        centerLat: userPos.lat,
-        centerLng: userPos.lng,
-        items: generated,
-      });
+      searchNewArea(userPos, setItems);
     }
+    setMapItemsLoading(false);
   }, [userPos]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
-    window.setTimeout(() => setToast(null), 2800);
+    window.setTimeout(() => setToast(null), 3200);
   }, []);
+
+  const persistItems = useCallback(
+    (filtered: MapItem[]) => {
+      const pos = userPosRef.current;
+      if (pos) {
+        savePersistedMapState({
+          savedAt: Date.now(),
+          centerLat: pos.lat,
+          centerLng: pos.lng,
+          items: filtered,
+        });
+      }
+    },
+    [],
+  );
 
   const collectItem = useCallback(
     (item: MapItem) => {
+      const pos = userPosRef.current;
+      if (!pos) {
+        showToast("Waiting for your position…");
+        return;
+      }
+      const dist = haversineMeters(pos.lat, pos.lng, item.lat, item.lng);
+      if (dist > MAP_COLLECT_RADIUS_M) {
+        showToast("Move closer to collect this item.");
+        return;
+      }
+
       const current = loadGameState();
       const next = applyMapItemCollect(current, item);
       if (!next) {
@@ -118,39 +161,23 @@ export function IslandMapClient() {
       }
       saveGameState(next);
       setGame(next);
-      const pos = userPosRef.current;
       setItems((prev) => {
         const filtered = prev.filter((i) => i.id !== item.id);
-        if (pos) {
-          savePersistedMapState({
-            savedAt: Date.now(),
-            centerLat: pos.lat,
-            centerLng: pos.lng,
-            items: filtered,
-          });
-        }
+        persistItems(filtered);
         return filtered;
       });
-      showToast(`You found: ${item.variant}`);
+      showToast(formatCollectToast(item));
     },
-    [showToast],
+    [persistItems, showToast],
   );
 
   collectHandlerRef.current = collectItem;
 
-  const refreshSpawns = useCallback(() => {
+  const onSearchNewArea = useCallback(() => {
     const pos = userPosRef.current;
     if (!pos) return;
-    clearPersistedMapState();
-    const generated = generateMapItems(pos.lat, pos.lng, randomSpawnCount());
-    setItems(generated);
-    savePersistedMapState({
-      savedAt: Date.now(),
-      centerLat: pos.lat,
-      centerLng: pos.lng,
-      items: generated,
-    });
-    showToast("New supplies scattered nearby.");
+    searchNewArea(pos, setItems);
+    showToast("Searching a new area…");
   }, [showToast]);
 
   useEffect(() => {
@@ -214,15 +241,35 @@ export function IslandMapClient() {
       itemMarkersRef.current.clear();
 
       const list = itemsForMapRef.current;
+      const pos = userPosRef.current;
+
       list.forEach((item) => {
         const colors = MAP_MARKER_STYLES[item.type];
+        const radius = markerRadiusForRarity(item.rarity);
         const m = L.circleMarker([item.lat, item.lng], {
-          radius: 10,
+          radius,
           color: colors.stroke,
           fillColor: colors.fill,
           fillOpacity: 0.92,
           weight: 2,
         }).addTo(map);
+
+        const distM =
+          pos != null
+            ? Math.round(haversineMeters(pos.lat, pos.lng, item.lat, item.lng))
+            : null;
+        const distLine =
+          distM != null ? `${distM} m away` : "Distance: —";
+        const capRarity =
+          item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1);
+        m.bindPopup(
+          `<div style="font-size:13px;line-height:1.45;min-width:140px">
+            <strong>${item.variant}</strong><br/>
+            <span style="opacity:.85">${capRarity}</span><br/>
+            <span style="opacity:.9">${distLine}</span>
+          </div>`,
+          { maxWidth: 260 },
+        );
 
         m.on("click", (ev) => {
           L.DomEvent.stopPropagation(ev);
@@ -236,7 +283,10 @@ export function IslandMapClient() {
     return () => {
       cancelled = true;
     };
-  }, [items, mapReady]);
+  }, [items, mapReady, userPos]);
+
+  const allCollected =
+    !mapItemsLoading && items.length === 0 && Boolean(userPos);
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#0a1628]">
@@ -255,7 +305,7 @@ export function IslandMapClient() {
               {game.energy}
             </p>
             <p className="mt-1 text-[10px] text-zinc-500">
-              −2 per pickup on the map
+              −2 per pickup · collect within {MAP_COLLECT_RADIUS_M}m
             </p>
           </div>
           <div className="flex flex-col items-end gap-2">
@@ -267,12 +317,17 @@ export function IslandMapClient() {
             </Link>
             <button
               type="button"
-              onClick={refreshSpawns}
+              onClick={onSearchNewArea}
               className="pointer-events-auto rounded-xl border border-zinc-600 bg-zinc-900/90 px-3 py-2 text-xs font-medium text-zinc-200 backdrop-blur-md hover:bg-zinc-800"
             >
-              Refresh spawns
+              Search New Area
             </button>
           </div>
+        </div>
+
+        <div className="pointer-events-auto max-w-md rounded-2xl border border-emerald-800/40 bg-black/70 px-3 py-2.5 text-xs leading-snug text-emerald-100/90 shadow-lg backdrop-blur-md">
+          Walk closer to items. Tap them when nearby to collect resources for your
+          tribe.
         </div>
 
         {locationNote && (
@@ -282,9 +337,24 @@ export function IslandMapClient() {
         )}
       </div>
 
+      {allCollected && (
+        <div className="pointer-events-auto absolute bottom-28 left-1/2 z-[1000] w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border border-amber-800/50 bg-black/85 p-4 text-center shadow-xl backdrop-blur-md">
+          <p className="text-sm font-medium text-amber-100">
+            All nearby items collected.
+          </p>
+          <button
+            type="button"
+            onClick={onSearchNewArea}
+            className="mt-3 w-full rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 py-3 text-sm font-bold text-emerald-950"
+          >
+            Search New Area
+          </button>
+        </div>
+      )}
+
       {toast && (
         <div
-          className="pointer-events-none fixed bottom-24 left-1/2 z-[1001] max-w-[90vw] -translate-x-1/2 rounded-2xl border border-emerald-600/50 bg-emerald-950/95 px-5 py-3 text-center text-sm font-medium text-emerald-50 shadow-xl"
+          className="pointer-events-none fixed bottom-24 left-1/2 z-[1001] max-w-[min(92vw,380px)] -translate-x-1/2 rounded-2xl border border-emerald-600/50 bg-emerald-950/95 px-5 py-3 text-center text-sm font-medium leading-snug text-emerald-50 shadow-xl"
           role="status"
         >
           {toast}

@@ -9,13 +9,25 @@ export const MAP_ITEMS_STORAGE_KEY = "survivor-go-map-items";
 /** Regenerate spawns after this many ms (optional persistence) */
 export const MAP_ITEMS_TTL_MS = 45 * 60 * 1000;
 
-export type MapResourceType = "food" | "water" | "material" | "coin";
+/** Player must be within this distance (m) to collect */
+export const MAP_COLLECT_RADIUS_M = 40;
+
+export type ItemRarity = "common" | "uncommon" | "rare";
+
+export type MapResourceType =
+  | "food"
+  | "water"
+  | "material"
+  | "coin"
+  | "idol"
+  | "clue";
 
 export type MapItem = {
   id: string;
   type: MapResourceType;
-  /** Display name: Banana, Coconut, etc. */
+  /** Display name */
   variant: string;
+  rarity: ItemRarity;
   lat: number;
   lng: number;
 };
@@ -35,6 +47,24 @@ const VARIANT_POOL: { type: MapResourceType; variant: string }[] = [
   { type: "material", variant: "Rope" },
   { type: "coin", variant: "Survivor Coin" },
 ];
+
+/** Haversine distance in meters (WGS84) */
+export function haversineMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
 /** Meters offset from origin using bearing (deg) and ground distance (m). */
 export function offsetFromLatLng(
@@ -60,6 +90,60 @@ export function offsetFromLatLng(
   return { lat: (φ2 * 180) / Math.PI, lng: (λ2 * 180) / Math.PI };
 }
 
+function newItemId(i: number): string {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `map-${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`;
+}
+
+function rollStandardRarity(type: MapResourceType): ItemRarity {
+  if (type === "coin") return "rare";
+  return Math.random() < 0.55 ? "common" : "uncommon";
+}
+
+function rollOneMapItem(
+  centerLat: number,
+  centerLng: number,
+  i: number,
+): MapItem {
+  const bearing = Math.random() * 360;
+  const dist = 100 + Math.random() * 200;
+  const { lat, lng } = offsetFromLatLng(centerLat, centerLng, bearing, dist);
+  const u = Math.random();
+
+  if (u < 0.03) {
+    return {
+      id: newItemId(i),
+      type: "idol",
+      variant: "Hidden Immunity Idol",
+      rarity: "rare",
+      lat,
+      lng,
+    };
+  }
+  if (u < 0.08) {
+    return {
+      id: newItemId(i),
+      type: "clue",
+      variant: "Advantage Clue",
+      rarity: "rare",
+      lat,
+      lng,
+    };
+  }
+
+  const pick =
+    VARIANT_POOL[Math.floor(Math.random() * VARIANT_POOL.length)]!;
+  return {
+    id: newItemId(i),
+    type: pick.type,
+    variant: pick.variant,
+    rarity: rollStandardRarity(pick.type),
+    lat,
+    lng,
+  };
+}
+
 export function generateMapItems(
   centerLat: number,
   centerLng: number,
@@ -68,22 +152,34 @@ export function generateMapItems(
   const n = Math.min(10, Math.max(5, count));
   const items: MapItem[] = [];
   for (let i = 0; i < n; i++) {
-    const pick = VARIANT_POOL[Math.floor(Math.random() * VARIANT_POOL.length)]!;
-    const bearing = Math.random() * 360;
-    const dist = 100 + Math.random() * 200;
-    const { lat, lng } = offsetFromLatLng(centerLat, centerLng, bearing, dist);
-    items.push({
-      id:
-        typeof crypto !== "undefined" && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `map-${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`,
-      type: pick.type,
-      variant: pick.variant,
-      lat,
-      lng,
-    });
+    items.push(rollOneMapItem(centerLat, centerLng, i));
   }
   return items;
+}
+
+function normalizePersistedItem(raw: unknown): MapItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const lat = Number(o.lat);
+  const lng = Number(o.lng);
+  const id = typeof o.id === "string" ? o.id : null;
+  const type = o.type as MapResourceType;
+  const variant = typeof o.variant === "string" ? o.variant : null;
+  if (!id || !variant || Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  const validTypes: MapResourceType[] = [
+    "food",
+    "water",
+    "material",
+    "coin",
+    "idol",
+    "clue",
+  ];
+  if (!validTypes.includes(type)) return null;
+  let rarity = o.rarity as ItemRarity;
+  if (rarity !== "common" && rarity !== "uncommon" && rarity !== "rare") {
+    rarity = type === "coin" ? "rare" : "common";
+  }
+  return { id, type, variant, rarity, lat, lng };
 }
 
 export function loadPersistedMapState(): PersistedMapPayload | null {
@@ -100,7 +196,10 @@ export function loadPersistedMapState(): PersistedMapPayload | null {
     ) {
       return null;
     }
-    return data;
+    const items = data.items
+      .map((x) => normalizePersistedItem(x))
+      .filter((x): x is MapItem => x != null);
+    return { ...data, items };
   } catch {
     return null;
   }
@@ -138,10 +237,40 @@ export function applyMapItemCollect(
     case "coin":
       next = { ...next, coins: next.coins + 1 };
       break;
+    case "idol":
+      next = { ...next, idols: next.idols + 1 };
+      break;
+    case "clue":
+      next = { ...next, clues: next.clues + 1 };
+      break;
     default:
       return null;
   }
   return next;
+}
+
+export function collectRewardLabel(item: MapItem): string {
+  switch (item.type) {
+    case "food":
+      return "+1 Food";
+    case "water":
+      return "+1 Water";
+    case "material":
+      return "+1 Material";
+    case "coin":
+      return "+1 Survivor Coin";
+    case "idol":
+      return "+1 Hidden Immunity Idol";
+    case "clue":
+      return "+1 Advantage Clue";
+    default:
+      return "+1";
+  }
+}
+
+/** Toast line: rarity, name, reward */
+export function formatCollectToast(item: MapItem): string {
+  return `You found a ${item.rarity} ${item.variant}. ${collectRewardLabel(item)}.`;
 }
 
 export const MAP_MARKER_STYLES: Record<
@@ -152,4 +281,12 @@ export const MAP_MARKER_STYLES: Record<
   water: { stroke: "#1e40af", fill: "#3b82f6" },
   material: { stroke: "#78350f", fill: "#b45309" },
   coin: { stroke: "#a16207", fill: "#eab308" },
+  idol: { stroke: "#6b21a8", fill: "#a855f7" },
+  clue: { stroke: "#86198f", fill: "#e879f9" },
 };
+
+export function markerRadiusForRarity(rarity: ItemRarity): number {
+  if (rarity === "rare") return 12;
+  if (rarity === "uncommon") return 10;
+  return 9;
+}

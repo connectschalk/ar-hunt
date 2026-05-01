@@ -86,9 +86,12 @@ export function PlayDashboard() {
             <StatPill label="Food" value={game.food} />
             <StatPill label="Water" value={game.water} />
             <StatPill label="Materials" value={game.materials} />
-            <div className="col-span-2 sm:col-span-1">
-              <StatPill label="Survivor Coins" value={game.coins} />
-            </div>
+            <StatPill label="Survivor Coins" value={game.coins} />
+            <StatPill
+              label="Hidden Immunity Idols"
+              value={game.idols}
+            />
+            <StatPill label="Advantage Clues" value={game.clues} />
           </div>
         </section>
 
@@ -152,9 +155,17 @@ export function PlayDashboard() {
               <span className="text-emerald-400/80">Materials</span>
               <span className="tabular-nums font-medium">{game.materials}</span>
             </li>
-            <li className="flex justify-between py-2">
+            <li className="flex justify-between border-b border-white/5 py-2">
               <span className="text-emerald-400/80">Survivor Coins</span>
               <span className="tabular-nums font-medium">{game.coins}</span>
+            </li>
+            <li className="flex justify-between border-b border-white/5 py-2">
+              <span className="text-emerald-400/80">Hidden Immunity Idols</span>
+              <span className="tabular-nums font-medium">{game.idols}</span>
+            </li>
+            <li className="flex justify-between py-2">
+              <span className="text-emerald-400/80">Advantage Clues</span>
+              <span className="tabular-nums font-medium">{game.clues}</span>
             </li>
           </ul>
         </section>

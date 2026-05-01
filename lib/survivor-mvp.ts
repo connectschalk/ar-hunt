@@ -6,6 +6,10 @@ export type GameState = {
   water: number;
   materials: number;
   coins: number;
+  /** Hidden Immunity Idols (map / future challenges) */
+  idols: number;
+  /** Advantage Clues (map / future challenges) */
+  clues: number;
 };
 
 export const DEFAULT_GAME_STATE: GameState = {
@@ -14,6 +18,8 @@ export const DEFAULT_GAME_STATE: GameState = {
   water: 0,
   materials: 0,
   coins: 0,
+  idols: 0,
+  clues: 0,
 };
 
 export const TRIBE_STORAGE_KEY = "survivor-go-tribe-name";
@@ -33,6 +39,8 @@ export function loadGameState(): GameState {
       water: Math.max(0, Number(parsed.water) || 0),
       materials: Math.max(0, Number(parsed.materials) || 0),
       coins: Math.max(0, Number(parsed.coins) || 0),
+      idols: Math.max(0, Number(parsed.idols) || 0),
+      clues: Math.max(0, Number(parsed.clues) || 0),
     };
   } catch {
     return { ...DEFAULT_GAME_STATE };
