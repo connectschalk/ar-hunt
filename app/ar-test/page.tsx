@@ -35,6 +35,15 @@ const TEST_MODEL_ROTATION = "0 180 0";
 const TEST_SPHERE_SCALE = "2 2 2";
 const TEST_FALLBACK_SPHERE_RADIUS = "2";
 
+/** Big GLB diagnostic (camera space, no GPS) */
+const DIAG_MODEL_POSITION = "0 -1 -3";
+const DIAG_MODEL_SCALE = "10 10 10";
+const DIAG_MODEL_ROTATION = "0 180 0";
+const DIAG_SPHERE_POSITION = "1 0 -3";
+const DIAG_BOX_POSITION = "-1 0 -3";
+const DIAG_AMBIENT_INTENSITY = 2;
+const DIAG_DIRECTIONAL_INTENSITY = 2;
+
 const MODEL_LOAD_TIMEOUT_MS = 10_000;
 /** If `scene` never fires `loaded` (common on some mobile WebKit builds), still show AR */
 const SCENE_LOAD_FALLBACK_MS = 6000;
@@ -45,15 +54,21 @@ const AR_JS_URL =
   "https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.3.2/aframe/build/aframe-ar.js";
 const AFRAME_URL = "https://aframe.io/releases/1.4.2/aframe.min.js";
 
-type ArRenderingMode = "gps" | "test";
+type ArRenderingMode = "gps" | "test" | "diagnostic";
 
 type ArDebugOverlay = {
   camera: "loading" | "ready" | "error";
   arScripts: "loading" | "loaded" | "error";
   model: "loading" | "loaded" | "error";
   gpsAnchor: "active" | "off";
-  modeLabel: "GPS mode" | "Test mode";
+  modeLabel:
+    | "GPS mode"
+    | "Test mode"
+    | "Diagnostic (big model)";
   modelVisibleError: string | null;
+  modelUrlStatus: "pending" | "loaded" | "failed";
+  modelBoundsInfo: string | null;
+  modelLoadErrorDetail: string | null;
 };
 
 const initialArDebug: ArDebugOverlay = {
@@ -63,7 +78,48 @@ const initialArDebug: ArDebugOverlay = {
   gpsAnchor: "off",
   modeLabel: "GPS mode",
   modelVisibleError: null,
+  modelUrlStatus: "pending",
+  modelBoundsInfo: null,
+  modelLoadErrorDetail: null,
 };
+
+function formatModelErrorDetail(ev: Event): string {
+  if ("detail" in ev && (ev as CustomEvent).detail != null) {
+    try {
+      return JSON.stringify((ev as CustomEvent).detail);
+    } catch {
+      return String((ev as CustomEvent).detail);
+    }
+  }
+  return String(ev);
+}
+
+function computeGltfBoundsString(modelEl: HTMLElement): string {
+  const w = window as unknown as {
+    AFRAME?: { THREE?: Record<string, unknown> };
+    THREE?: Record<string, unknown>;
+  };
+  const THREE = w.AFRAME?.THREE ?? w.THREE;
+  const obj = (modelEl as unknown as { object3D?: object }).object3D;
+  if (!THREE || !obj) {
+    return "n/a (THREE or object3D not ready)";
+  }
+  try {
+    const T = THREE as unknown as {
+      Box3: new () => {
+        setFromObject: (o: object) => void;
+        getSize: (v: object) => { x: number; y: number; z: number };
+      };
+      Vector3: new () => object;
+    };
+    const box = new T.Box3();
+    box.setFromObject(obj as object);
+    const size = box.getSize(new T.Vector3());
+    return `${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} (units)`;
+  } catch {
+    return "n/a (bbox failed)";
+  }
+}
 
 /** Haversine distance in meters between two WGS84 points */
 function haversineMeters(
@@ -289,7 +345,15 @@ export default function ArTestPage() {
       patchArDebug({
         model: "loading",
         modelVisibleError: null,
-        modeLabel: mode === "test" ? "Test mode" : "GPS mode",
+        modelUrlStatus: "pending",
+        modelBoundsInfo: null,
+        modelLoadErrorDetail: null,
+        modeLabel:
+          mode === "diagnostic"
+            ? "Diagnostic (big model)"
+            : mode === "test"
+              ? "Test mode"
+              : "GPS mode",
         gpsAnchor: mode === "gps" ? "active" : "off",
       });
 
@@ -335,48 +399,73 @@ export default function ArTestPage() {
       modelEntity.id = "ar-object";
       modelEntity.setAttribute("gltf-model", `#${CHARACTER_MODEL_ASSET_ID}`);
       console.log("[ar-test] Model requested", CHARACTER_MODEL_SRC);
-      modelEntity.setAttribute(
-        "scale",
-        mode === "test" ? TEST_MODEL_SCALE : CHARACTER_MODEL_SCALE,
-      );
-      modelEntity.setAttribute(
-        "rotation",
-        mode === "test" ? TEST_MODEL_ROTATION : CHARACTER_MODEL_ROTATION,
-      );
-      if (mode === "gps") {
-        modelEntity.setAttribute("gps-entity-place", gpsPlace);
-        modelEntity.setAttribute("position", CHARACTER_MODEL_POSITION);
-      }
       modelEntity.setAttribute("class", "clickable");
       modelEntity.setAttribute("visible", "true");
 
       const sphere = document.createElement("a-sphere");
       sphere.setAttribute(
-        "radius",
-        mode === "test" ? TEST_FALLBACK_SPHERE_RADIUS : "2",
-      );
-      sphere.setAttribute(
         "material",
-        "color: #22ffc8; metalness: 0.2; roughness: 0.35; emissive: #004433; emissiveIntensity: 0.5",
+        "color: #22ffc8; metalness: 0.2; roughness: 0.35; emissive: #00ffcc; emissiveIntensity: 0.85",
       );
       sphere.setAttribute("class", "clickable");
-      sphere.setAttribute("visible", "false");
-      if (mode === "test") {
-        sphere.setAttribute("scale", TEST_SPHERE_SCALE);
-      }
-      if (mode === "gps") {
-        sphere.setAttribute("gps-entity-place", gpsPlace);
-        sphere.setAttribute("position", CHARACTER_MODEL_POSITION);
-      }
 
       const label = document.createElement("a-text");
       label.setAttribute("value", "Tap to collect");
       label.setAttribute("align", "center");
-      label.setAttribute("position", COLLECT_LABEL_POSITION);
-      label.setAttribute("scale", COLLECT_LABEL_SCALE);
       label.setAttribute("color", COLLECT_LABEL_COLOR);
+
+      let diagBox: HTMLElement | null = null;
+      let ambientEnt: HTMLElement | null = null;
+      let directionalEnt: HTMLElement | null = null;
+
       if (mode === "gps") {
+        modelEntity.setAttribute("scale", CHARACTER_MODEL_SCALE);
+        modelEntity.setAttribute("rotation", CHARACTER_MODEL_ROTATION);
+        modelEntity.setAttribute("gps-entity-place", gpsPlace);
+        modelEntity.setAttribute("position", CHARACTER_MODEL_POSITION);
+        sphere.setAttribute("radius", "2");
+        sphere.setAttribute("visible", "false");
+        sphere.setAttribute("gps-entity-place", gpsPlace);
+        sphere.setAttribute("position", CHARACTER_MODEL_POSITION);
+        label.setAttribute("position", COLLECT_LABEL_POSITION);
+        label.setAttribute("scale", COLLECT_LABEL_SCALE);
         label.setAttribute("gps-entity-place", gpsPlace);
+      } else if (mode === "test") {
+        modelEntity.setAttribute("scale", TEST_MODEL_SCALE);
+        modelEntity.setAttribute("rotation", TEST_MODEL_ROTATION);
+        sphere.setAttribute("radius", TEST_FALLBACK_SPHERE_RADIUS);
+        sphere.setAttribute("visible", "false");
+        sphere.setAttribute("scale", TEST_SPHERE_SCALE);
+        label.setAttribute("position", COLLECT_LABEL_POSITION);
+        label.setAttribute("scale", COLLECT_LABEL_SCALE);
+      } else {
+        modelEntity.setAttribute("position", DIAG_MODEL_POSITION);
+        modelEntity.setAttribute("scale", DIAG_MODEL_SCALE);
+        modelEntity.setAttribute("rotation", DIAG_MODEL_ROTATION);
+        sphere.setAttribute("radius", "0.55");
+        sphere.setAttribute("position", DIAG_SPHERE_POSITION);
+        sphere.setAttribute("visible", "true");
+        sphere.setAttribute("scale", "1 1 1");
+        label.setAttribute("position", "0 1.2 -3");
+        label.setAttribute("scale", "8 8 8");
+        diagBox = document.createElement("a-box");
+        diagBox.setAttribute("position", DIAG_BOX_POSITION);
+        diagBox.setAttribute("width", "0.7");
+        diagBox.setAttribute("height", "0.7");
+        diagBox.setAttribute("depth", "0.7");
+        diagBox.setAttribute("color", "#ff3333");
+        diagBox.setAttribute("class", "clickable");
+        ambientEnt = document.createElement("a-entity");
+        ambientEnt.setAttribute(
+          "light",
+          `type: ambient; color: #ffffff; intensity: ${DIAG_AMBIENT_INTENSITY}`,
+        );
+        directionalEnt = document.createElement("a-entity");
+        directionalEnt.setAttribute(
+          "light",
+          `type: directional; color: #ffffff; intensity: ${DIAG_DIRECTIONAL_INTENSITY}`,
+        );
+        directionalEnt.setAttribute("position", "0 6 4");
       }
 
       const onCollectClick = (ev: Event) => {
@@ -385,6 +474,9 @@ export default function ArTestPage() {
       };
       modelEntity.addEventListener("click", onCollectClick);
       sphere.addEventListener("click", onCollectClick);
+      if (diagBox) {
+        diagBox.addEventListener("click", onCollectClick);
+      }
 
       if (mode === "test") {
         const rig = document.createElement("a-entity");
@@ -397,19 +489,40 @@ export default function ArTestPage() {
         rig.appendChild(label);
         camera.appendChild(rig);
         testSceneElsRef.current = { modelEntity, sphere };
+      } else if (mode === "diagnostic") {
+        camera.appendChild(modelEntity);
+        camera.appendChild(sphere);
+        if (diagBox) {
+          camera.appendChild(diagBox);
+        }
+        camera.appendChild(label);
+        testSceneElsRef.current = { modelEntity, sphere };
       }
 
       let modelLoadSettled = false;
       let fallbackTimer: number;
 
-      const activateSphereFallback = (reason: string) => {
+      const activateSphereFallback = (reason: string, errorDetail?: string) => {
         window.clearTimeout(fallbackTimer);
         if (modelLoadSettled) return;
         modelLoadSettled = true;
-        const msg = `Model did not load (${reason}). Using sphere fallback.`;
         console.error("[ar-test] Model error / timeout — fallback sphere", reason);
+        if (mode === "diagnostic") {
+          const msg = `GLB failed (${reason}). Red box + cyan sphere still visible for render test.`;
+          patchArDebug({
+            model: "error",
+            modelUrlStatus: "failed",
+            modelLoadErrorDetail: errorDetail ?? reason,
+            modelVisibleError: msg,
+          });
+          modelEntity.setAttribute("visible", "false");
+          return;
+        }
+        const msg = `Model did not load (${reason}). Using sphere fallback.`;
         patchArDebug({
           model: "error",
+          modelUrlStatus: "failed",
+          modelLoadErrorDetail: errorDetail ?? reason,
           modelVisibleError: msg,
         });
         modelEntity.setAttribute("visible", "false");
@@ -431,22 +544,59 @@ export default function ArTestPage() {
         () => {
           window.clearTimeout(fallbackTimer);
           modelLoadSettled = true;
-          sphere.setAttribute("visible", "false");
-          patchArDebug({ model: "loaded", modelVisibleError: null });
+          if (mode !== "diagnostic") {
+            sphere.setAttribute("visible", "false");
+          }
+          patchArDebug({
+            model: "loaded",
+            modelUrlStatus: "loaded",
+            modelVisibleError: null,
+            modelLoadErrorDetail: null,
+          });
           console.log("[ar-test] Model loaded", CHARACTER_MODEL_SRC);
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+              const bounds = computeGltfBoundsString(modelEntity);
+              patchArDebug({ modelBoundsInfo: bounds });
+            });
+          });
         },
         { once: true },
       );
       modelEntity.addEventListener(
         "model-error",
         (ev) => {
-          console.error("[ar-test] Model error", CHARACTER_MODEL_SRC, ev);
-          activateSphereFallback("model-error");
+          const detail = formatModelErrorDetail(ev);
+          console.error(
+            "[ar-test] Model error",
+            CHARACTER_MODEL_SRC,
+            detail,
+            ev,
+          );
+          patchArDebug({
+            modelUrlStatus: "failed",
+            modelLoadErrorDetail: detail,
+          });
+          if (mode === "diagnostic") {
+            window.clearTimeout(fallbackTimer);
+            modelLoadSettled = true;
+            modelEntity.setAttribute("visible", "false");
+            patchArDebug({
+              model: "error",
+              modelVisibleError: `GLB error: ${detail}`,
+            });
+            return;
+          }
+          activateSphereFallback("model-error", detail);
         },
         { once: true },
       );
 
       scene.appendChild(assets);
+      if (ambientEnt && directionalEnt) {
+        scene.appendChild(ambientEnt);
+        scene.appendChild(directionalEnt);
+      }
       scene.appendChild(camera);
       if (mode === "gps") {
         scene.appendChild(modelEntity);
@@ -655,25 +805,85 @@ export default function ArTestPage() {
     }
   }, [destroyScene, ensureArScripts, mountScene, patchArDebug]);
 
+  const showBigDiagnosticModel = useCallback(async () => {
+    console.log("[ar-test] Show big test model (diagnostic mode)");
+    rawStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawStreamRef.current = null;
+    setRawCameraMode(false);
+    setArRenderingMode("diagnostic");
+    destroyScene();
+    setPhase("ar_prep");
+    setArDebug({
+      ...initialArDebug,
+      modeLabel: "Diagnostic (big model)",
+      gpsAnchor: "off",
+      camera: "loading",
+    });
+    patchArDebug({ arScripts: "loading" });
+    try {
+      await ensureArScripts();
+
+      try {
+        console.log("[ar-test] Requesting camera (diagnostic mode)");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        stream.getTracks().forEach((t) => t.stop());
+        patchArDebug({ camera: "ready" });
+        console.log("[ar-test] Camera success (diagnostic mode)");
+      } catch (camErr) {
+        const detail =
+          camErr instanceof Error
+            ? `${camErr.name}: ${camErr.message}`
+            : String(camErr);
+        console.error("[ar-test] Camera error (diagnostic mode)", detail);
+        patchArDebug({ camera: "error" });
+        setCameraErrorDetail(detail);
+        setPhase("error_cam");
+        return;
+      }
+
+      mountScene("diagnostic");
+    } catch (e) {
+      console.error("[ar-test] Diagnostic mode script load failed", e);
+      patchArDebug({ arScripts: "error" });
+      setPhase("error_cam");
+      setCameraErrorDetail(
+        e instanceof Error ? e.message : "Failed to load AR scripts",
+      );
+    }
+  }, [destroyScene, ensureArScripts, mountScene, patchArDebug]);
+
   const showFallbackSphereOnly = useCallback(() => {
     const els = testSceneElsRef.current;
     if (!els) {
       console.warn(
-        "[ar-test] Show fallback sphere: no test rig — tap “Test model in front of me” first",
+        "[ar-test] Show fallback sphere: no camera rig — use test or diagnostic first",
       );
       return;
     }
     console.log("[ar-test] Show fallback sphere (manual)");
     els.modelEntity.setAttribute("visible", "false");
     els.sphere.setAttribute("visible", "true");
-    els.sphere.setAttribute("position", "0 0 0");
-    els.sphere.setAttribute("scale", TEST_SPHERE_SCALE);
-    patchArDebug({
-      model: "error",
-      modelVisibleError:
-        "Manual: bright sphere at camera rig (0 0 -4), scale 2 2 2.",
-    });
-  }, [patchArDebug]);
+    if (arRenderingMode === "diagnostic") {
+      els.sphere.setAttribute("position", DIAG_SPHERE_POSITION);
+      els.sphere.setAttribute("scale", "2 2 2");
+      patchArDebug({
+        model: "error",
+        modelVisibleError:
+          "Manual: sphere only at (1, 0, -3), scale 2 — red box still visible.",
+      });
+    } else {
+      els.sphere.setAttribute("position", "0 0 0");
+      els.sphere.setAttribute("scale", TEST_SPHERE_SCALE);
+      patchArDebug({
+        model: "error",
+        modelVisibleError:
+          "Manual: bright sphere at camera rig (0 0 -4), scale 2 2 2.",
+      });
+    }
+  }, [arRenderingMode, patchArDebug]);
 
   const clearWatch = useCallback(() => {
     if (watchIdRef.current !== null) {
@@ -1204,6 +1414,26 @@ export default function ArTestPage() {
               Mode: {arDebug.modeLabel}
             </li>
             <li>
+              Model URL:{" "}
+              <span
+                className={
+                  arDebug.modelUrlStatus === "loaded"
+                    ? "text-emerald-400"
+                    : arDebug.modelUrlStatus === "failed"
+                      ? "text-red-400"
+                      : "text-amber-300"
+                }
+              >
+                {arDebug.modelUrlStatus}
+              </span>
+            </li>
+            <li>Model bounds: {arDebug.modelBoundsInfo ?? "—"}</li>
+            {arDebug.modelLoadErrorDetail && (
+              <li className="break-all text-red-300">
+                GLB error: {arDebug.modelLoadErrorDetail}
+              </li>
+            )}
+            <li>
               Video elements: {videoProbe.count}
             </li>
             <li>Video readyState: {videoProbe.ready}</li>
@@ -1230,9 +1460,11 @@ export default function ArTestPage() {
           <p className="mb-3 text-center text-[11px] leading-snug text-zinc-400">
             {rawCameraMode
               ? "Plain getUserMedia video (no AR.js). Use “Return to AR scene” when done."
-              : arRenderingMode === "test"
-                ? "Test mode: GLB or sphere fixed in front of the camera. Tap to collect."
-                : "GPS mode: use the buttons below to verify rendering without GPS placement."}
+              : arRenderingMode === "diagnostic"
+                ? "Diagnostic: huge GLB, cyan sphere, red box — strong lights. Tap any to collect."
+                : arRenderingMode === "test"
+                  ? "Test mode: GLB or sphere fixed in front of the camera. Tap to collect."
+                  : "GPS mode: use the buttons below to verify rendering without GPS placement."}
           </p>
           <div className="flex flex-col gap-2">
             {rawCameraMode ? (
@@ -1247,6 +1479,13 @@ export default function ArTestPage() {
               <>
                 <button
                   type="button"
+                  onClick={() => void showBigDiagnosticModel()}
+                  className="w-full rounded-xl bg-violet-600 py-3.5 text-sm font-semibold text-white active:opacity-90"
+                >
+                  Show big test model
+                </button>
+                <button
+                  type="button"
                   onClick={() => void switchToTestMode()}
                   className="w-full rounded-xl bg-white py-3.5 text-sm font-semibold text-black active:opacity-90"
                 >
@@ -1255,11 +1494,18 @@ export default function ArTestPage() {
                 <button
                   type="button"
                   onClick={showFallbackSphereOnly}
-                  disabled={!(phase === "ar" && arRenderingMode === "test")}
+                  disabled={
+                    !(
+                      phase === "ar" &&
+                      (arRenderingMode === "test" ||
+                        arRenderingMode === "diagnostic")
+                    )
+                  }
                   title={
-                    arRenderingMode === "test"
+                    arRenderingMode === "test" ||
+                    arRenderingMode === "diagnostic"
                       ? "Hide GLB and show the bright sphere"
-                      : "Switch to test mode first"
+                      : "Switch to test or diagnostic first"
                   }
                   className="w-full rounded-xl border border-zinc-600 bg-zinc-900 py-3.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
