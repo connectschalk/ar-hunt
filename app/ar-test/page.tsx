@@ -14,35 +14,53 @@ const TARGET_LONGITUDE = 18.963577;
 const UNLOCK_RADIUS_METERS = 5000;
 
 // -----------------------------------------------------------------------------
-// GLB marker (`public/character.glb` → URL `/character.glb`)
-// Matches: <a-assets><a-asset-item id="characterModel" src="/character.glb"></a-asset-item></a-assets>
+// GLB — must match `public/character.glb` → URL `/character.glb`
 // -----------------------------------------------------------------------------
 const CHARACTER_MODEL_SRC = "/character.glb";
 const CHARACTER_MODEL_ASSET_ID = "characterModel";
 
-/** Uniform scale of the AR model (X Y Z) — tweak size in the scene */
+/** GPS mode: model at anchor */
 const CHARACTER_MODEL_SCALE = "0.5 0.5 0.5";
-/** Rotation in degrees (X Y Z) — tweak facing */
 const CHARACTER_MODEL_ROTATION = "0 180 0";
-/**
- * Model position at the GPS point (meters, local X Y Z).
- * Adjust the middle value (Y) for height above the anchor / ground.
- */
 const CHARACTER_MODEL_POSITION = "0 0 0";
-
-/** Label above the marker (local offset at the same GPS point) — raise Y to sit above a tall model */
 const COLLECT_LABEL_POSITION = "0 2 0";
 const COLLECT_LABEL_SCALE = "5 5 5";
 const COLLECT_LABEL_COLOR = "#FFFFFF";
 
-/**
- * AR.js script URL (AR.js org build 3.3.2).
- * Note: `https://unpkg.com/aframe-arjs@3.3.2/aframe-ar.js` is not published on npm/CDN;
- * jsdelivr serves the same release tag from GitHub.
- */
+/** Test mode: model parented in front of camera */
+const TEST_MODEL_ANCHOR_POSITION = "0 0 -4";
+const TEST_MODEL_SCALE = "0.5 0.5 0.5";
+const TEST_MODEL_ROTATION = "0 180 0";
+
+const MODEL_LOAD_TIMEOUT_MS = 10_000;
+/** If `scene` never fires `loaded` (common on some mobile WebKit builds), still show AR */
+const SCENE_LOAD_FALLBACK_MS = 6000;
+/** Replace AR-prep spinner with detailed status text */
+const AR_PREP_SPINNER_REPLACE_MS = 5000;
+
 const AR_JS_URL =
   "https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.3.2/aframe/build/aframe-ar.js";
 const AFRAME_URL = "https://aframe.io/releases/1.4.2/aframe.min.js";
+
+type ArRenderingMode = "gps" | "test";
+
+type ArDebugOverlay = {
+  camera: "loading" | "ready" | "error";
+  arScripts: "loading" | "loaded" | "error";
+  model: "loading" | "loaded" | "error";
+  gpsAnchor: "active" | "off";
+  modeLabel: "GPS mode" | "Test mode";
+  modelVisibleError: string | null;
+};
+
+const initialArDebug: ArDebugOverlay = {
+  camera: "loading",
+  arScripts: "loading",
+  model: "loading",
+  gpsAnchor: "off",
+  modeLabel: "GPS mode",
+  modelVisibleError: null,
+};
 
 /** Haversine distance in meters between two WGS84 points */
 function haversineMeters(
@@ -102,7 +120,6 @@ const INSECURE_CONTEXT_WARNING =
 export default function ArTestPage() {
   const [phase, setPhase] = useState<Phase>("intro");
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
-  /** Shown below Start (intro) and on hunt progress screens for debugging */
   const [statusLine, setStatusLine] = useState<string>(
     "Ready. Tap Start AR Hunt when you’re set.",
   );
@@ -114,6 +131,16 @@ export default function ArTestPage() {
     null,
   );
 
+  const [arRenderingMode, setArRenderingMode] =
+    useState<ArRenderingMode>("gps");
+  const [arDebug, setArDebug] = useState<ArDebugOverlay>(initialArDebug);
+  const [geoSnapshot, setGeoSnapshot] = useState<{
+    lat: number;
+    lon: number;
+    dist: number;
+  } | null>(null);
+  const [arPrepShowDetail, setArPrepShowDetail] = useState(false);
+
   const sceneHostRef = useRef<HTMLDivElement | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const scriptsPromiseRef = useRef<Promise<void> | null>(null);
@@ -121,6 +148,10 @@ export default function ArTestPage() {
   const phaseRef = useRef<Phase>("intro");
   const enteringArRef = useRef(false);
   const cameraTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const patchArDebug = useCallback((p: Partial<ArDebugOverlay>) => {
+    setArDebug((prev) => ({ ...prev, ...p }));
+  }, []);
 
   phaseRef.current = phase;
 
@@ -130,6 +161,17 @@ export default function ArTestPage() {
     console.log("[ar-test] Secure context:", secure);
     setIsSecureContext(secure);
   }, []);
+
+  useEffect(() => {
+    if (phase !== "ar_prep") {
+      setArPrepShowDetail(false);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setArPrepShowDetail(true);
+    }, AR_PREP_SPINNER_REPLACE_MS);
+    return () => window.clearTimeout(t);
+  }, [phase]);
 
   const clearCameraTimeout = useCallback(() => {
     if (cameraTimeoutRef.current !== null) {
@@ -147,17 +189,26 @@ export default function ArTestPage() {
   }, [clearCameraTimeout]);
 
   const ensureArScripts = useCallback(async () => {
-    console.log("[ar-test] Loading AR scripts");
+    patchArDebug({ arScripts: "loading" });
     setStatusLine("Loading AR scripts…");
     if (!scriptsPromiseRef.current) {
       scriptsPromiseRef.current = (async () => {
         await loadScript(AFRAME_URL);
+        console.log("[ar-test] A-Frame loaded");
         await loadScript(AR_JS_URL);
+        console.log("[ar-test] AR.js loaded");
       })();
     }
-    await scriptsPromiseRef.current;
-    console.log("[ar-test] AR scripts finished loading");
-  }, []);
+    try {
+      await scriptsPromiseRef.current;
+      patchArDebug({ arScripts: "loaded" });
+      console.log("[ar-test] AR scripts ready (both)");
+    } catch (e) {
+      patchArDebug({ arScripts: "error" });
+      console.error("[ar-test] AR scripts failed", e);
+      throw e;
+    }
+  }, [patchArDebug]);
 
   const handleCollected = useCallback(() => {
     destroyScene();
@@ -167,156 +218,205 @@ export default function ArTestPage() {
   const collectHandlerRef = useRef(handleCollected);
   collectHandlerRef.current = handleCollected;
 
-  const mountScene = useCallback(() => {
-    const host = sceneHostRef.current;
-    if (!host) return;
+  const mountScene = useCallback(
+    (mode: ArRenderingMode) => {
+      const host = sceneHostRef.current;
+      if (!host) return;
 
-    host.innerHTML = "";
+      host.innerHTML = "";
+      patchArDebug({
+        model: "loading",
+        modelVisibleError: null,
+        modeLabel: mode === "test" ? "Test mode" : "GPS mode",
+        gpsAnchor: mode === "gps" ? "active" : "off",
+      });
 
-    const scene = document.createElement("a-scene");
-    scene.setAttribute(
-      "embedded",
-      "",
-    );
-    scene.setAttribute("vr-mode-ui", "enabled: false");
-    scene.setAttribute(
-      "arjs",
-      "sourceType: webcam; videoTexture: true; debugUIEnabled: false;",
-    );
-    scene.setAttribute(
-      "renderer",
-      "logarithmicDepthBuffer: true; antialias: true;",
-    );
-    scene.setAttribute("loading-screen", "enabled: false");
+      const scene = document.createElement("a-scene");
+      scene.setAttribute("embedded", "");
+      scene.setAttribute("vr-mode-ui", "enabled: false");
+      scene.setAttribute(
+        "arjs",
+        "sourceType: webcam; videoTexture: true; debugUIEnabled: false;",
+      );
+      scene.setAttribute(
+        "renderer",
+        "logarithmicDepthBuffer: true; antialias: true;",
+      );
+      scene.setAttribute("loading-screen", "enabled: false");
 
-    const assets = document.createElement("a-assets");
-    const assetItem = document.createElement("a-asset-item");
-    assetItem.setAttribute("id", CHARACTER_MODEL_ASSET_ID);
-    assetItem.setAttribute("src", CHARACTER_MODEL_SRC);
-    assets.appendChild(assetItem);
+      console.log("[ar-test] Scene created", { mode });
 
-    const camera = document.createElement("a-camera");
-    camera.setAttribute("gps-camera", "");
-    camera.setAttribute("rotation-reader", "");
+      const assets = document.createElement("a-assets");
+      const assetItem = document.createElement("a-asset-item");
+      assetItem.setAttribute("id", CHARACTER_MODEL_ASSET_ID);
+      assetItem.setAttribute("src", CHARACTER_MODEL_SRC);
+      assets.appendChild(assetItem);
 
-    const cursor = document.createElement("a-entity");
-    cursor.setAttribute("cursor", "fuse: false; rayOrigin: mouse");
-    cursor.setAttribute("position", "0 0 -1");
-    cursor.setAttribute("geometry", "primitive: ring; radiusInner: 0.02; radiusOuter: 0.03");
-    cursor.setAttribute("material", "color: #ffffff; shader: flat");
-    cursor.setAttribute("raycaster", "objects: .clickable");
-    camera.appendChild(cursor);
+      const camera = document.createElement("a-camera");
+      camera.setAttribute("gps-camera", "");
+      camera.setAttribute("rotation-reader", "");
 
-    const gpsPlace = `latitude: ${TARGET_LATITUDE}; longitude: ${TARGET_LONGITUDE}`;
+      const cursor = document.createElement("a-entity");
+      cursor.setAttribute("cursor", "fuse: false; rayOrigin: mouse");
+      cursor.setAttribute("position", "0 0 -1");
+      cursor.setAttribute(
+        "geometry",
+        "primitive: ring; radiusInner: 0.02; radiusOuter: 0.03",
+      );
+      cursor.setAttribute("material", "color: #ffffff; shader: flat");
+      cursor.setAttribute("raycaster", "objects: .clickable");
+      camera.appendChild(cursor);
 
-    const modelEntity = document.createElement("a-entity");
-    modelEntity.id = "ar-object";
-    modelEntity.setAttribute("gltf-model", `#${CHARACTER_MODEL_ASSET_ID}`);
-    modelEntity.setAttribute("gps-entity-place", gpsPlace);
-    modelEntity.setAttribute("scale", CHARACTER_MODEL_SCALE);
-    modelEntity.setAttribute("rotation", CHARACTER_MODEL_ROTATION);
-    modelEntity.setAttribute("position", CHARACTER_MODEL_POSITION);
-    modelEntity.setAttribute("class", "clickable");
-    modelEntity.setAttribute("visible", "true");
+      const gpsPlace = `latitude: ${TARGET_LATITUDE}; longitude: ${TARGET_LONGITUDE}`;
 
-    const sphere = document.createElement("a-sphere");
-    sphere.setAttribute("radius", "2");
-    sphere.setAttribute(
-      "material",
-      "color: #22ffc8; metalness: 0.2; roughness: 0.35; emissive: #004433; emissiveIntensity: 0.35",
-    );
-    sphere.setAttribute("gps-entity-place", gpsPlace);
-    sphere.setAttribute("position", CHARACTER_MODEL_POSITION);
-    sphere.setAttribute("class", "clickable");
-    sphere.setAttribute("visible", "false");
-
-    const label = document.createElement("a-text");
-    label.setAttribute("value", "Tap to collect");
-    label.setAttribute("align", "center");
-    label.setAttribute("position", COLLECT_LABEL_POSITION);
-    label.setAttribute("scale", COLLECT_LABEL_SCALE);
-    label.setAttribute("color", COLLECT_LABEL_COLOR);
-    label.setAttribute("gps-entity-place", gpsPlace);
-
-    const onCollectClick = (ev: Event) => {
-      ev.stopPropagation();
-      collectHandlerRef.current();
-    };
-    modelEntity.addEventListener("click", onCollectClick);
-    sphere.addEventListener("click", onCollectClick);
-
-    let modelLoadSettled = false;
-    const fallbackMs = 15000;
-    let fallbackTimer: number;
-
-    const activateSphereFallback = (reason: string) => {
-      window.clearTimeout(fallbackTimer);
-      if (modelLoadSettled) return;
-      modelLoadSettled = true;
-      console.error("[ar-test] GLB unavailable; showing sphere fallback:", reason);
-      modelEntity.setAttribute("visible", "false");
-      sphere.setAttribute("visible", "true");
-    };
-
-    fallbackTimer = window.setTimeout(() => {
-      if (!modelLoadSettled) {
-        activateSphereFallback(`no model-loaded within ${fallbackMs}ms`);
+      const modelEntity = document.createElement("a-entity");
+      modelEntity.id = "ar-object";
+      modelEntity.setAttribute("gltf-model", `#${CHARACTER_MODEL_ASSET_ID}`);
+      console.log("[ar-test] Model requested", CHARACTER_MODEL_SRC);
+      modelEntity.setAttribute(
+        "scale",
+        mode === "test" ? TEST_MODEL_SCALE : CHARACTER_MODEL_SCALE,
+      );
+      modelEntity.setAttribute(
+        "rotation",
+        mode === "test" ? TEST_MODEL_ROTATION : CHARACTER_MODEL_ROTATION,
+      );
+      if (mode === "gps") {
+        modelEntity.setAttribute("gps-entity-place", gpsPlace);
+        modelEntity.setAttribute("position", CHARACTER_MODEL_POSITION);
       }
-    }, fallbackMs) as unknown as number;
+      modelEntity.setAttribute("class", "clickable");
+      modelEntity.setAttribute("visible", "true");
 
-    modelEntity.addEventListener(
-      "model-loaded",
-      () => {
+      const sphere = document.createElement("a-sphere");
+      sphere.setAttribute("radius", "2");
+      sphere.setAttribute(
+        "material",
+        "color: #22ffc8; metalness: 0.2; roughness: 0.35; emissive: #004433; emissiveIntensity: 0.35",
+      );
+      sphere.setAttribute("class", "clickable");
+      sphere.setAttribute("visible", "false");
+      if (mode === "gps") {
+        sphere.setAttribute("gps-entity-place", gpsPlace);
+        sphere.setAttribute("position", CHARACTER_MODEL_POSITION);
+      }
+
+      const label = document.createElement("a-text");
+      label.setAttribute("value", "Tap to collect");
+      label.setAttribute("align", "center");
+      label.setAttribute("position", COLLECT_LABEL_POSITION);
+      label.setAttribute("scale", COLLECT_LABEL_SCALE);
+      label.setAttribute("color", COLLECT_LABEL_COLOR);
+      if (mode === "gps") {
+        label.setAttribute("gps-entity-place", gpsPlace);
+      }
+
+      const onCollectClick = (ev: Event) => {
+        ev.stopPropagation();
+        collectHandlerRef.current();
+      };
+      modelEntity.addEventListener("click", onCollectClick);
+      sphere.addEventListener("click", onCollectClick);
+
+      if (mode === "test") {
+        const testRoot = document.createElement("a-entity");
+        testRoot.setAttribute("position", TEST_MODEL_ANCHOR_POSITION);
+        testRoot.appendChild(modelEntity);
+        sphere.setAttribute("position", "0 0 0");
+        testRoot.appendChild(sphere);
+        testRoot.appendChild(label);
+        camera.appendChild(testRoot);
+      }
+
+      let modelLoadSettled = false;
+      let fallbackTimer: number;
+
+      const activateSphereFallback = (reason: string) => {
         window.clearTimeout(fallbackTimer);
+        if (modelLoadSettled) return;
         modelLoadSettled = true;
-        sphere.setAttribute("visible", "false");
-        console.log(
-          "[ar-test] GLB model loaded successfully:",
-          CHARACTER_MODEL_SRC,
-        );
-      },
-      { once: true },
-    );
-    modelEntity.addEventListener(
-      "model-error",
-      (ev) => {
-        console.error(
-          "[ar-test] GLB model failed to load:",
-          CHARACTER_MODEL_SRC,
-          ev,
-        );
-        activateSphereFallback("model-error");
-      },
-      { once: true },
-    );
+        const msg = `Model did not load (${reason}). Using sphere fallback.`;
+        console.error("[ar-test] Model error / timeout — fallback sphere", reason);
+        patchArDebug({
+          model: "error",
+          modelVisibleError: msg,
+        });
+        modelEntity.setAttribute("visible", "false");
+        sphere.setAttribute("visible", "true");
+      };
 
-    scene.appendChild(assets);
-    scene.appendChild(camera);
-    scene.appendChild(modelEntity);
-    scene.appendChild(sphere);
-    scene.appendChild(label);
+      fallbackTimer = window.setTimeout(() => {
+        if (!modelLoadSettled) {
+          activateSphereFallback(`timeout ${MODEL_LOAD_TIMEOUT_MS}ms`);
+        }
+      }, MODEL_LOAD_TIMEOUT_MS) as unknown as number;
 
-    let settled = false;
-    const markReady = () => {
-      if (settled) return;
-      if (phaseRef.current !== "ar_prep") return;
-      settled = true;
-      clearCameraTimeout();
-      setPhase("ar");
-    };
+      modelEntity.addEventListener(
+        "model-loaded",
+        () => {
+          window.clearTimeout(fallbackTimer);
+          modelLoadSettled = true;
+          sphere.setAttribute("visible", "false");
+          patchArDebug({ model: "loaded", modelVisibleError: null });
+          console.log("[ar-test] Model loaded", CHARACTER_MODEL_SRC);
+        },
+        { once: true },
+      );
+      modelEntity.addEventListener(
+        "model-error",
+        (ev) => {
+          console.error("[ar-test] Model error", CHARACTER_MODEL_SRC, ev);
+          activateSphereFallback("model-error");
+        },
+        { once: true },
+      );
 
-    scene.addEventListener("loaded", markReady);
-
-    cameraTimeoutRef.current = setTimeout(() => {
-      if (!settled && phaseRef.current === "ar_prep") {
-        settled = true;
-        destroyScene();
-        setPhase("ar_stalled");
+      scene.appendChild(assets);
+      scene.appendChild(camera);
+      if (mode === "gps") {
+        scene.appendChild(modelEntity);
+        scene.appendChild(sphere);
+        scene.appendChild(label);
       }
-    }, 18000);
 
-    host.appendChild(scene);
-  }, [clearCameraTimeout, destroyScene]);
+      let sceneUiSettled = false;
+      let sceneFallbackTimer: number;
+
+      const sealArView = (from: string) => {
+        if (sceneUiSettled) return;
+        sceneUiSettled = true;
+        window.clearTimeout(sceneFallbackTimer);
+        clearCameraTimeout();
+        console.log("[ar-test] Scene loaded", { from });
+        setPhase("ar");
+      };
+
+      sceneFallbackTimer = window.setTimeout(() => {
+        if (!sceneUiSettled && phaseRef.current === "ar_prep") {
+          console.warn(
+            "[ar-test] Scene `loaded` event did not fire; forcing AR view open",
+          );
+          sealArView("loaded-fallback-timer");
+        }
+      }, SCENE_LOAD_FALLBACK_MS) as unknown as number;
+
+      scene.addEventListener("loaded", () => {
+        if (phaseRef.current !== "ar_prep") return;
+        sealArView("loaded-event");
+      });
+
+      cameraTimeoutRef.current = setTimeout(() => {
+        if (!sceneUiSettled && phaseRef.current === "ar_prep") {
+          window.clearTimeout(sceneFallbackTimer);
+          destroyScene();
+          setPhase("ar_stalled");
+        }
+      }, 18000);
+
+      host.appendChild(scene);
+    },
+    [clearCameraTimeout, destroyScene, patchArDebug],
+  );
 
   const teardownAr = useCallback(() => {
     enteringArRef.current = false;
@@ -336,7 +436,14 @@ export default function ArTestPage() {
     }
 
     enteringArRef.current = true;
+    setArRenderingMode("gps");
+    setArDebug({
+      ...initialArDebug,
+      modeLabel: "GPS mode",
+      gpsAnchor: "active",
+    });
     setPhase("ar_prep");
+    patchArDebug({ camera: "loading" });
 
     try {
       await ensureArScripts();
@@ -356,6 +463,7 @@ export default function ArTestPage() {
           audio: false,
         });
         console.log("[ar-test] Camera success");
+        patchArDebug({ camera: "ready" });
         setStatusLine("Camera allowed. Starting AR scene…");
         stream.getTracks().forEach((t) => t.stop());
       } catch (camErr) {
@@ -364,6 +472,7 @@ export default function ArTestPage() {
             ? `${camErr.name}: ${camErr.message}`
             : String(camErr);
         console.log("[ar-test] Camera error", detail);
+        patchArDebug({ camera: "error" });
         setCameraErrorDetail(detail);
         setPhase("error_cam");
         enteringArRef.current = false;
@@ -377,19 +486,46 @@ export default function ArTestPage() {
         return;
       }
 
-      mountScene();
+      console.log("[ar-test] GPS mode activated");
+      mountScene("gps");
     } catch (outer) {
       const detail =
         outer instanceof Error
           ? `${outer.name}: ${outer.message}`
           : String(outer);
       console.log("[ar-test] Camera error (outer)", detail);
+      patchArDebug({ camera: "error", arScripts: "error" });
       setCameraErrorDetail(detail);
       setPhase("error_cam");
     } finally {
       enteringArRef.current = false;
     }
-  }, [ensureArScripts, mountScene, teardownAr]);
+  }, [ensureArScripts, mountScene, patchArDebug, teardownAr]);
+
+  const switchToTestMode = useCallback(async () => {
+    console.log("[ar-test] Test mode activated");
+    setArRenderingMode("test");
+    destroyScene();
+    setPhase("ar_prep");
+    setArDebug({
+      ...initialArDebug,
+      modeLabel: "Test mode",
+      gpsAnchor: "off",
+      camera: "ready",
+    });
+    patchArDebug({ arScripts: "loading" });
+    try {
+      await ensureArScripts();
+      mountScene("test");
+    } catch (e) {
+      console.error("[ar-test] Test mode script load failed", e);
+      patchArDebug({ arScripts: "error" });
+      setPhase("error_cam");
+      setCameraErrorDetail(
+        e instanceof Error ? e.message : "Failed to load AR scripts",
+      );
+    }
+  }, [destroyScene, ensureArScripts, mountScene, patchArDebug]);
 
   const clearWatch = useCallback(() => {
     if (watchIdRef.current !== null) {
@@ -428,6 +564,11 @@ export default function ArTestPage() {
         console.log("[ar-test] Distance calculated", rounded, "m");
         distanceRef.current = d;
         setDistanceMeters(rounded);
+        setGeoSnapshot({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          dist: rounded,
+        });
         setStatusLine(`Distance: ${rounded} m (unlock ≤ ${UNLOCK_RADIUS_METERS} m)`);
 
         const inside = d <= UNLOCK_RADIUS_METERS;
@@ -486,6 +627,9 @@ export default function ArTestPage() {
     setLocationErrorDetail(null);
     setCameraErrorDetail(null);
     setStatusLine("Ready. Tap Start AR Hunt when you’re set.");
+    setArRenderingMode("gps");
+    setArDebug(initialArDebug);
+    setGeoSnapshot(null);
   }, [clearCameraTimeout, clearWatch, teardownAr]);
 
   useEffect(() => {
@@ -496,9 +640,10 @@ export default function ArTestPage() {
     };
   }, [clearCameraTimeout, clearWatch, destroyScene]);
 
+  const showArHud = phase === "ar" || phase === "ar_prep";
+
   return (
     <div className="fixed inset-0 z-0 flex flex-col bg-black text-zinc-100">
-      {/* Intro */}
       {phase === "intro" && (
         <div className="relative z-20 flex min-h-full flex-col justify-between px-6 py-10">
           <div className="mx-auto max-w-md pt-8">
@@ -546,7 +691,6 @@ export default function ArTestPage() {
         </div>
       )}
 
-      {/* Locating */}
       {phase === "locating" && (
         <div className="relative z-20 flex min-h-full flex-col items-center justify-center px-6">
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-600 border-t-white" />
@@ -566,7 +710,6 @@ export default function ArTestPage() {
         </div>
       )}
 
-      {/* Too far */}
       {phase === "too_far" && distanceMeters !== null && (
         <div className="relative z-20 flex min-h-full flex-col justify-between px-6 py-10">
           <div className="mx-auto max-w-md pt-8">
@@ -600,15 +743,18 @@ export default function ArTestPage() {
         </div>
       )}
 
-      {/* AR prep */}
       {phase === "ar_prep" && (
         <div className="relative z-20 flex min-h-full flex-col items-center justify-center px-6">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-600 border-t-white" />
+          {!arPrepShowDetail && (
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-600 border-t-white" />
+          )}
           <p className="mt-8 text-center text-lg text-zinc-300">
-            Loading AR…
+            {arPrepShowDetail ? "Still working…" : "Loading AR…"}
           </p>
           <p className="mt-2 max-w-sm text-center text-sm text-zinc-500">
-            Allow camera access. Point your phone toward the marker direction.
+            {arPrepShowDetail
+              ? "If this stays blank, check the debug panel after the camera opens — or use “Test model in front of me”."
+              : "Allow camera access. Point your phone toward the marker direction."}
           </p>
           <p
             className="mt-8 max-w-md rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-center text-xs leading-relaxed text-zinc-400"
@@ -617,10 +763,15 @@ export default function ArTestPage() {
           >
             {statusLine}
           </p>
+          {arPrepShowDetail && (
+            <p className="mt-4 max-w-md text-center text-xs text-zinc-500">
+              Status detail (after {AR_PREP_SPINNER_REPLACE_MS / 1000}s): scripts
+              and scene may still be initializing on iOS Safari.
+            </p>
+          )}
         </div>
       )}
 
-      {/* Location denied / unavailable */}
       {phase === "error_loc" && (
         <div className="relative z-20 flex min-h-full flex-col justify-between px-6 py-10">
           <div className="mx-auto max-w-md pt-8">
@@ -649,7 +800,6 @@ export default function ArTestPage() {
         </div>
       )}
 
-      {/* Camera error */}
       {phase === "error_cam" && (
         <div className="relative z-20 flex min-h-full flex-col justify-between px-6 py-10">
           <div className="mx-auto max-w-md pt-8">
@@ -678,7 +828,6 @@ export default function ArTestPage() {
         </div>
       )}
 
-      {/* Camera / scene stalled */}
       {phase === "ar_stalled" && (
         <div className="relative z-20 flex min-h-full flex-col justify-between px-6 py-10">
           <div className="mx-auto max-w-md pt-8">
@@ -703,7 +852,6 @@ export default function ArTestPage() {
         </div>
       )}
 
-      {/* Success */}
       {phase === "success" && (
         <div className="relative z-50 flex min-h-full flex-col items-center justify-center bg-black px-6">
           <p className="text-center text-3xl font-semibold leading-snug text-white">
@@ -719,18 +867,113 @@ export default function ArTestPage() {
         </div>
       )}
 
-      {/* Full-screen AR host; visible only when AR runs */}
       <div
         ref={sceneHostRef}
-        className={`fixed inset-0 z-10 h-full w-full ${phase === "ar" || phase === "ar_prep" ? "block" : "pointer-events-none invisible"}`}
-        aria-hidden={phase !== "ar" && phase !== "ar_prep"}
+        className={`fixed inset-0 z-10 h-full w-full ${showArHud ? "block" : "pointer-events-none invisible"}`}
+        aria-hidden={!showArHud}
       />
 
-      {/* Hint while in AR */}
-      {phase === "ar" && (
+      {showArHud && (
+        <div className="pointer-events-auto fixed left-2 right-2 top-2 z-40 max-h-[50vh] overflow-y-auto rounded-lg border border-zinc-700 bg-black/85 p-3 text-[11px] leading-snug text-zinc-200 shadow-xl backdrop-blur-sm sm:left-auto sm:right-3 sm:max-w-sm">
+          <p className="font-semibold text-white">AR debug</p>
+          <ul className="mt-2 space-y-1 font-mono text-[10px] text-zinc-300">
+            <li>
+              Camera:{" "}
+              <span
+                className={
+                  arDebug.camera === "ready"
+                    ? "text-emerald-400"
+                    : arDebug.camera === "error"
+                      ? "text-red-400"
+                      : "text-amber-300"
+                }
+              >
+                {arDebug.camera}
+              </span>
+            </li>
+            <li>
+              Location:{" "}
+              {geoSnapshot
+                ? `${geoSnapshot.lat.toFixed(6)}, ${geoSnapshot.lon.toFixed(6)}`
+                : "—"}
+            </li>
+            <li>
+              Distance:{" "}
+              {geoSnapshot ? `${geoSnapshot.dist} m` : "—"}
+            </li>
+            <li>
+              AR scripts:{" "}
+              <span
+                className={
+                  arDebug.arScripts === "loaded"
+                    ? "text-emerald-400"
+                    : arDebug.arScripts === "error"
+                      ? "text-red-400"
+                      : "text-amber-300"
+                }
+              >
+                {arDebug.arScripts}
+              </span>
+            </li>
+            <li>
+              Model:{" "}
+              <span
+                className={
+                  arDebug.model === "loaded"
+                    ? "text-emerald-400"
+                    : arDebug.model === "error"
+                      ? "text-red-400"
+                      : "text-amber-300"
+                }
+              >
+                {arDebug.model}
+              </span>{" "}
+              <span className="text-zinc-500">({CHARACTER_MODEL_SRC})</span>
+            </li>
+            <li>
+              GPS anchor:{" "}
+              <span
+                className={
+                  arDebug.gpsAnchor === "active"
+                    ? "text-emerald-400"
+                    : "text-zinc-500"
+                }
+              >
+                {arDebug.gpsAnchor === "active" ? "active" : "off"}
+              </span>
+            </li>
+            <li className="text-amber-200">
+              Mode: {arDebug.modeLabel}
+            </li>
+          </ul>
+          {arDebug.modelVisibleError && (
+            <p className="mt-2 rounded border border-red-900/60 bg-red-950/50 px-2 py-1.5 text-red-200">
+              {arDebug.modelVisibleError}
+            </p>
+          )}
+          {phase === "ar" && arRenderingMode === "gps" && (
+            <button
+              type="button"
+              onClick={() => void switchToTestMode()}
+              className="mt-3 w-full rounded-lg bg-white py-3 text-sm font-semibold text-black"
+            >
+              Test model in front of me
+            </button>
+          )}
+        </div>
+      )}
+
+      {phase === "ar" && arRenderingMode === "gps" && (
         <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/80 to-transparent px-4 pb-8 pt-16">
           <p className="pointer-events-none text-center text-sm text-zinc-300">
-            Walk the marker into view, then tap the glowing sphere.
+            Walk the marker into view, then tap the model or sphere.
+          </p>
+        </div>
+      )}
+      {phase === "ar" && arRenderingMode === "test" && (
+        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/80 to-transparent px-4 pb-8 pt-16">
+          <p className="pointer-events-none text-center text-sm text-zinc-300">
+            Test mode: model is fixed in front of the camera. Tap to collect.
           </p>
         </div>
       )}
