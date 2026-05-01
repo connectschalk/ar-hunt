@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Map as LeafletMap, Marker } from "leaflet";
+import type {
+  CircleMarker as LeafletCircleMarker,
+  Map as LeafletMap,
+  Marker,
+} from "leaflet";
 import {
   getMapItemIconSrc,
   mapItemIconLayout,
@@ -37,12 +41,26 @@ function randomSpawnCount(): number {
   return 5 + Math.floor(Math.random() * 6);
 }
 
+function mapDevLog(...args: unknown[]) {
+  if (
+    typeof process !== "undefined" &&
+    process.env.NODE_ENV === "development"
+  ) {
+    console.log("[Survivor map]", ...args);
+  }
+}
+
 function searchNewArea(
   pos: { lat: number; lng: number },
   setItems: (items: MapItem[]) => void,
 ) {
+  mapDevLog("clear persisted map + generate new items", {
+    lat: pos.lat,
+    lng: pos.lng,
+  });
   clearPersistedMapState();
   const generated = generateMapItems(pos.lat, pos.lng, randomSpawnCount());
+  mapDevLog("generated items", generated.length);
   setItems(generated);
   savePersistedMapState({
     savedAt: Date.now(),
@@ -69,7 +87,9 @@ export function IslandMapClient() {
   const itemsForMapRef = useRef<MapItem[]>([]);
   const userPosRef = useRef<{ lat: number; lng: number } | null>(null);
   const collectHandlerRef = useRef<(item: MapItem) => void>(() => {});
-  const itemsSeededRef = useRef(false);
+  /** Ensures initial spawn / load runs only once when position is first ready */
+  const hasSpawnedInitialItemsRef = useRef(false);
+  const playerMarkerRef = useRef<LeafletCircleMarker | null>(null);
 
   useEffect(() => {
     userPosRef.current = userPos;
@@ -111,8 +131,8 @@ export function IslandMapClient() {
   }, []);
 
   useEffect(() => {
-    if (!userPos || itemsSeededRef.current) return;
-    itemsSeededRef.current = true;
+    if (!userPos || hasSpawnedInitialItemsRef.current) return;
+    hasSpawnedInitialItemsRef.current = true;
     const persisted = loadPersistedMapState();
     const stillFresh =
       persisted &&
@@ -120,8 +140,12 @@ export function IslandMapClient() {
       persisted.items.length > 0;
 
     if (stillFresh) {
+      mapDevLog("loaded items from localStorage", persisted.items.length);
       setItems(persisted.items);
     } else {
+      mapDevLog(
+        "no valid persisted map (missing, stale, or empty) — generating",
+      );
       searchNewArea(userPos, setItems);
     }
     setMapItemsLoading(false);
@@ -169,6 +193,7 @@ export function IslandMapClient() {
       const withProg = applyMapCollectProgression(next, item);
       saveGameState(withProg);
       setGame(withProg);
+      mapDevLog("collected item", item.id, item.variant);
       setItems((prev) => {
         const filtered = prev.filter((i) => i.id !== item.id);
         persistItems(filtered);
@@ -206,25 +231,27 @@ export function IslandMapClient() {
   const showDevSpawn =
     typeof process !== "undefined" && process.env.NODE_ENV === "development";
 
+  /** Create Leaflet map once when we first have a position — never tear down on GPS updates */
   useEffect(() => {
-    if (!userPos || !mapDivRef.current || mapRef.current) return;
+    if (!userPos || mapRef.current || !mapDivRef.current) return;
 
     let cancelled = false;
 
     void import("leaflet").then((L) => {
-      if (cancelled || !mapDivRef.current || mapRef.current) return;
+      const pos = userPosRef.current;
+      if (cancelled || !mapDivRef.current || mapRef.current || !pos) return;
 
       const map = L.map(mapDivRef.current, {
         zoomControl: true,
         attributionControl: true,
-      }).setView([userPos.lat, userPos.lng], 17);
+      }).setView([pos.lat, pos.lng], 17);
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution:
           '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }).addTo(map);
 
-      L.circleMarker([userPos.lat, userPos.lng], {
+      const circle = L.circleMarker([pos.lat, pos.lng], {
         radius: 12,
         color: "#06b6d4",
         fillColor: "#22d3ee",
@@ -234,6 +261,7 @@ export function IslandMapClient() {
         .addTo(map)
         .bindPopup("You are here");
 
+      playerMarkerRef.current = circle;
       mapRef.current = map;
       setMapReady(true);
 
@@ -244,6 +272,18 @@ export function IslandMapClient() {
 
     return () => {
       cancelled = true;
+    };
+  }, [userPos]);
+
+  /** Follow player on GPS updates without recreating the map */
+  useEffect(() => {
+    if (!userPos || !playerMarkerRef.current) return;
+    playerMarkerRef.current.setLatLng([userPos.lat, userPos.lng]);
+  }, [userPos]);
+
+  useEffect(() => {
+    return () => {
+      playerMarkerRef.current = null;
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -251,8 +291,9 @@ export function IslandMapClient() {
       itemMarkersRef.current.clear();
       setMapReady(false);
     };
-  }, [userPos]);
+  }, []);
 
+  /** Sync loot markers only when item list or map readiness changes — not on every GPS tick */
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
@@ -308,7 +349,33 @@ export function IslandMapClient() {
     return () => {
       cancelled = true;
     };
-  }, [items, mapReady, userPos]);
+  }, [items, mapReady]);
+
+  /** Update popup distances when player moves — markers stay mounted */
+  useEffect(() => {
+    if (!mapReady || !mapRef.current) return;
+
+    void import("leaflet").then(() => {
+      if (!mapRef.current) return;
+      const pos = userPosRef.current;
+      itemsForMapRef.current.forEach((item) => {
+        const m = itemMarkersRef.current.get(item.id);
+        if (!m || pos == null) return;
+        const distM = Math.round(
+          haversineMeters(pos.lat, pos.lng, item.lat, item.lng),
+        );
+        const capRarity =
+          item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1);
+        m.setPopupContent(
+          `<div style="font-size:13px;line-height:1.45;min-width:140px">
+            <strong>${item.variant}</strong><br/>
+            <span style="opacity:.85">${capRarity}</span><br/>
+            <span style="opacity:.9">${distM} m away</span>
+          </div>`,
+        );
+      });
+    });
+  }, [userPos, mapReady, items]);
 
   const allCollected =
     !mapItemsLoading && items.length === 0 && Boolean(userPos);
