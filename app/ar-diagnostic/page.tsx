@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const AFRAME_URL = "https://aframe.io/releases/1.4.2/aframe.min.js";
-const ASTRONAUT_GLB =
-  "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
+/** Same-origin GLB: place file at `public/astronaut.glb` */
+const ASTRO_GLB_SRC = "/astronaut.glb";
+const ASTRO_ASSET_ID = "astro";
 
 const UI_Z = 1000;
 const SCENE_Z = 10;
@@ -132,9 +133,8 @@ export default function ArDiagnosticPage() {
 
     const assets = document.createElement("a-assets");
     const assetItem = document.createElement("a-asset-item");
-    assetItem.setAttribute("id", "astronautModel");
-    assetItem.setAttribute("src", ASTRONAUT_GLB);
-    assetItem.setAttribute("crossorigin", "anonymous");
+    assetItem.setAttribute("id", ASTRO_ASSET_ID);
+    assetItem.setAttribute("src", ASTRO_GLB_SRC);
     assets.appendChild(assetItem);
 
     const ambient = document.createElement("a-entity");
@@ -154,7 +154,8 @@ export default function ArDiagnosticPage() {
     camera.setAttribute("look-controls", "pointerLockEnabled: false");
 
     const astro = document.createElement("a-entity");
-    astro.setAttribute("gltf-model", "#astronautModel");
+    console.log("model requested", ASTRO_GLB_SRC);
+    astro.setAttribute("gltf-model", `#${ASTRO_ASSET_ID}`);
     astro.setAttribute("position", "0 -1 -3");
     astro.setAttribute("rotation", "0 0 0");
 
@@ -186,6 +187,7 @@ export default function ArDiagnosticPage() {
     astro.addEventListener(
       "model-loaded",
       () => {
+        console.log("model-loaded", ASTRO_GLB_SRC);
         setModelStatus("loaded");
         setModelErrorDetail(null);
       },
@@ -194,11 +196,12 @@ export default function ArDiagnosticPage() {
     astro.addEventListener(
       "model-error",
       (ev) => {
-        setModelStatus("error");
         const d =
           "detail" in ev && (ev as CustomEvent).detail != null
             ? JSON.stringify((ev as CustomEvent).detail)
             : String(ev);
+        console.error("model-error", d);
+        setModelStatus("error");
         setModelErrorDetail(d);
       },
       { once: true },
@@ -294,7 +297,7 @@ export default function ArDiagnosticPage() {
           </li>
         </ul>
         <p className="mt-2 break-all text-[10px] text-zinc-500">
-          {ASTRONAUT_GLB}
+          {ASTRO_GLB_SRC} · #{ASTRO_ASSET_ID}
         </p>
         {modelErrorDetail && (
           <p className="mt-2 break-all text-[10px] text-red-300">
