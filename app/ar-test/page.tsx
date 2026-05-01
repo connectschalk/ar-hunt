@@ -120,6 +120,44 @@ type Phase =
 const INSECURE_CONTEXT_WARNING =
   "Camera and location usually require HTTPS on mobile. Use a deployed HTTPS URL or a tunnel like localtunnel/ngrok.";
 
+/** AR.js camera feed + A-Frame stacking (iOS Safari often needs explicit z-index / sizing) */
+function applyArJsVideoLayering(sceneEl: HTMLElement, _hostEl: HTMLElement) {
+  document.querySelectorAll("video").forEach((node) => {
+    if (node.id === "ar-raw-camera-video") return;
+    const v = node as HTMLVideoElement;
+    const s = v.style;
+    s.setProperty("position", "fixed");
+    s.setProperty("inset", "0");
+    s.setProperty("width", "100vw");
+    s.setProperty("height", "100vh");
+    s.setProperty("object-fit", "cover");
+    s.setProperty("z-index", "0");
+    s.setProperty("opacity", "1");
+    s.setProperty("visibility", "visible");
+    s.setProperty("display", "block");
+  });
+
+  const s = sceneEl.style;
+  s.setProperty("position", "fixed");
+  s.setProperty("inset", "0");
+  s.setProperty("width", "100vw");
+  s.setProperty("height", "100vh");
+  s.setProperty("z-index", "1");
+  s.setProperty("background", "transparent");
+
+  sceneEl.querySelectorAll("canvas").forEach((node) => {
+    const c = node as HTMLCanvasElement;
+    const cs = c.style;
+    cs.setProperty("position", "fixed");
+    cs.setProperty("inset", "0");
+    cs.setProperty("width", "100vw");
+    cs.setProperty("height", "100vh");
+    cs.setProperty("z-index", "2");
+    cs.setProperty("pointer-events", "auto");
+    cs.setProperty("background", "transparent");
+  });
+}
+
 export default function ArTestPage() {
   const [phase, setPhase] = useState<Phase>("intro");
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
@@ -143,8 +181,18 @@ export default function ArTestPage() {
     dist: number;
   } | null>(null);
   const [arPrepShowDetail, setArPrepShowDetail] = useState(false);
+  const [rawCameraMode, setRawCameraMode] = useState(false);
+  const [videoProbe, setVideoProbe] = useState<{
+    count: number;
+    ready: string;
+    dim: string;
+  }>({ count: 0, ready: "—", dim: "—" });
 
   const sceneHostRef = useRef<HTMLDivElement | null>(null);
+  const rawVideoRef = useRef<HTMLVideoElement | null>(null);
+  const rawStreamRef = useRef<MediaStream | null>(null);
+  const lastArModeRef = useRef<ArRenderingMode>("test");
+  const videoLayerObserverRef = useRef<MutationObserver | null>(null);
   /** Set when `mountScene("test")` builds camera-relative rig (for “Show fallback sphere”) */
   const testSceneElsRef = useRef<{
     modelEntity: HTMLElement;
@@ -190,6 +238,8 @@ export default function ArTestPage() {
 
   const destroyScene = useCallback(() => {
     clearCameraTimeout();
+    videoLayerObserverRef.current?.disconnect();
+    videoLayerObserverRef.current = null;
     testSceneElsRef.current = null;
     const host = sceneHostRef.current;
     if (host) {
@@ -232,7 +282,10 @@ export default function ArTestPage() {
       const host = sceneHostRef.current;
       if (!host) return;
 
+      lastArModeRef.current = mode;
       host.innerHTML = "";
+      videoLayerObserverRef.current?.disconnect();
+      videoLayerObserverRef.current = null;
       patchArDebug({
         model: "loading",
         modelVisibleError: null,
@@ -410,6 +463,13 @@ export default function ArTestPage() {
         window.clearTimeout(sceneFallbackTimer);
         clearCameraTimeout();
         console.log("[ar-test] Scene loaded", { from });
+        applyArJsVideoLayering(scene as unknown as HTMLElement, host);
+        window.requestAnimationFrame(() => {
+          applyArJsVideoLayering(scene as unknown as HTMLElement, host);
+          window.setTimeout(() => {
+            applyArJsVideoLayering(scene as unknown as HTMLElement, host);
+          }, 120);
+        });
         setPhase("ar");
       };
 
@@ -436,11 +496,32 @@ export default function ArTestPage() {
       }, 18000);
 
       host.appendChild(scene);
+
+      const sceneEl = scene as unknown as HTMLElement;
+      applyArJsVideoLayering(sceneEl, host);
+      const runLayering = () => applyArJsVideoLayering(sceneEl, host);
+      window.requestAnimationFrame(() => {
+        runLayering();
+        window.requestAnimationFrame(runLayering);
+      });
+      window.setTimeout(runLayering, 50);
+      window.setTimeout(runLayering, 300);
+      window.setTimeout(runLayering, 1000);
+
+      const mo = new MutationObserver(runLayering);
+      mo.observe(host, { subtree: true, childList: true, attributes: true });
+      videoLayerObserverRef.current = mo;
+
+      scene.addEventListener("loaded", runLayering);
+      scene.addEventListener("renderstart", runLayering as EventListener);
     },
     [clearCameraTimeout, destroyScene, patchArDebug],
   );
 
   const teardownAr = useCallback(() => {
+    rawStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawStreamRef.current = null;
+    setRawCameraMode(false);
     enteringArRef.current = false;
     destroyScene();
   }, [destroyScene]);
@@ -526,6 +607,9 @@ export default function ArTestPage() {
 
   const switchToTestMode = useCallback(async () => {
     console.log("[ar-test] Test mode activated");
+    rawStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawStreamRef.current = null;
+    setRawCameraMode(false);
     setArRenderingMode("test");
     destroyScene();
     setPhase("ar_prep");
@@ -682,6 +766,9 @@ export default function ArTestPage() {
   }, [startHunt]);
 
   const restart = useCallback(() => {
+    rawStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawStreamRef.current = null;
+    setRawCameraMode(false);
     teardownAr();
     clearWatch();
     clearCameraTimeout();
@@ -704,10 +791,103 @@ export default function ArTestPage() {
     };
   }, [clearCameraTimeout, clearWatch, destroyScene]);
 
+  useEffect(() => {
+    if (phase !== "ar" || rawCameraMode) {
+      document.documentElement.style.removeProperty("background");
+      document.body.style.removeProperty("background");
+      return;
+    }
+    document.documentElement.style.setProperty("background", "transparent");
+    document.body.style.setProperty("background", "transparent");
+    return () => {
+      document.documentElement.style.removeProperty("background");
+      document.body.style.removeProperty("background");
+    };
+  }, [phase, rawCameraMode]);
+
+  useEffect(() => {
+    if (phase !== "ar" || rawCameraMode) return;
+    const tick = () => {
+      const list = document.querySelectorAll<HTMLVideoElement>(
+        "video:not(#ar-raw-camera-video)",
+      );
+      const v = list[0];
+      setVideoProbe({
+        count: list.length,
+        ready: v ? String(v.readyState) : "—",
+        dim:
+          v && v.videoWidth > 0
+            ? `${v.videoWidth}x${v.videoHeight}`
+            : "—",
+      });
+    };
+    tick();
+    const id = window.setInterval(tick, 500);
+    return () => window.clearInterval(id);
+  }, [phase, rawCameraMode]);
+
+  useEffect(() => {
+    if (!rawCameraMode || !rawVideoRef.current || !rawStreamRef.current) {
+      return;
+    }
+    const v = rawVideoRef.current;
+    v.srcObject = rawStreamRef.current;
+    void v.play().catch(() => {});
+  }, [rawCameraMode]);
+
+  const showRawCameraTest = useCallback(async () => {
+    console.log("[ar-test] Raw camera test — HTML video (outside A-Frame)");
+    lastArModeRef.current = arRenderingMode;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      rawStreamRef.current = stream;
+      destroyScene();
+      setRawCameraMode(true);
+    } catch (e) {
+      console.error("[ar-test] Raw camera getUserMedia failed", e);
+      setCameraErrorDetail(
+        e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+      );
+    }
+  }, [arRenderingMode, destroyScene]);
+
+  const dismissRawCameraTest = useCallback(async () => {
+    console.log("[ar-test] Dismiss raw camera — restore A-Frame scene");
+    rawStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawStreamRef.current = null;
+    setRawCameraMode(false);
+    setPhase("ar_prep");
+    patchArDebug({ camera: "loading" });
+    try {
+      await ensureArScripts();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      stream.getTracks().forEach((t) => t.stop());
+      patchArDebug({ camera: "ready" });
+      mountScene(lastArModeRef.current);
+    } catch (e) {
+      const detail =
+        e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      console.error("[ar-test] Restore AR after raw test failed", detail);
+      patchArDebug({ camera: "error" });
+      setCameraErrorDetail(detail);
+      setPhase("error_cam");
+    }
+  }, [ensureArScripts, mountScene, patchArDebug]);
+
   const showArHud = phase === "ar" || phase === "ar_prep";
 
   return (
-    <div className="fixed inset-0 z-0 flex flex-col bg-black text-zinc-100">
+    <div
+      className={`fixed inset-0 z-0 flex min-h-full w-full flex-col text-zinc-100 ${
+        phase === "ar" && !rawCameraMode ? "bg-transparent" : "bg-black"
+      }`}
+    >
       {phase === "intro" && (
         <div className="relative z-20 flex min-h-full flex-col justify-between px-6 py-10">
           <div className="mx-auto max-w-md pt-8">
@@ -931,10 +1111,24 @@ export default function ArTestPage() {
         </div>
       )}
 
+      <video
+        id="ar-raw-camera-video"
+        ref={rawVideoRef}
+        className={`fixed inset-0 z-[5] h-[100dvh] w-full object-cover ${
+          rawCameraMode ? "block" : "hidden"
+        }`}
+        playsInline
+        muted
+        autoPlay
+        aria-hidden={!rawCameraMode}
+      />
+
       <div
         ref={sceneHostRef}
-        className={`fixed inset-0 z-10 h-full w-full ${showArHud ? "block" : "pointer-events-none invisible"}`}
-        aria-hidden={!showArHud}
+        className={`fixed inset-0 z-10 h-full w-full ${
+          showArHud && !rawCameraMode ? "block" : "pointer-events-none invisible"
+        } ${phase === "ar" && !rawCameraMode ? "bg-transparent" : ""}`}
+        aria-hidden={!showArHud || rawCameraMode}
       />
 
       {showArHud && (
@@ -1009,6 +1203,14 @@ export default function ArTestPage() {
             <li className="text-amber-200">
               Mode: {arDebug.modeLabel}
             </li>
+            <li>
+              Video elements: {videoProbe.count}
+            </li>
+            <li>Video readyState: {videoProbe.ready}</li>
+            <li>Video dimensions: {videoProbe.dim}</li>
+            {rawCameraMode && (
+              <li className="text-cyan-300">Raw HTML video test active</li>
+            )}
           </ul>
           {arDebug.modelVisibleError && (
             <p className="mt-2 rounded border border-red-900/60 bg-red-950/50 px-2 py-1.5 text-red-200">
@@ -1026,31 +1228,52 @@ export default function ArTestPage() {
           }}
         >
           <p className="mb-3 text-center text-[11px] leading-snug text-zinc-400">
-            {arRenderingMode === "test"
-              ? "Test mode: GLB or sphere fixed in front of the camera. Tap to collect."
-              : "GPS mode: use the button below to verify rendering without GPS placement."}
+            {rawCameraMode
+              ? "Plain getUserMedia video (no AR.js). Use “Return to AR scene” when done."
+              : arRenderingMode === "test"
+                ? "Test mode: GLB or sphere fixed in front of the camera. Tap to collect."
+                : "GPS mode: use the buttons below to verify rendering without GPS placement."}
           </p>
           <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => void switchToTestMode()}
-              className="w-full rounded-xl bg-white py-3.5 text-sm font-semibold text-black active:opacity-90"
-            >
-              Test model in front of me
-            </button>
-            <button
-              type="button"
-              onClick={showFallbackSphereOnly}
-              disabled={!(phase === "ar" && arRenderingMode === "test")}
-              title={
-                arRenderingMode === "test"
-                  ? "Hide GLB and show the bright sphere"
-                  : "Switch to test mode first"
-              }
-              className="w-full rounded-xl border border-zinc-600 bg-zinc-900 py-3.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Show fallback sphere
-            </button>
+            {rawCameraMode ? (
+              <button
+                type="button"
+                onClick={() => void dismissRawCameraTest()}
+                className="w-full rounded-xl bg-white py-3.5 text-sm font-semibold text-black active:opacity-90"
+              >
+                Return to AR scene
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void switchToTestMode()}
+                  className="w-full rounded-xl bg-white py-3.5 text-sm font-semibold text-black active:opacity-90"
+                >
+                  Test model in front of me
+                </button>
+                <button
+                  type="button"
+                  onClick={showFallbackSphereOnly}
+                  disabled={!(phase === "ar" && arRenderingMode === "test")}
+                  title={
+                    arRenderingMode === "test"
+                      ? "Hide GLB and show the bright sphere"
+                      : "Switch to test mode first"
+                  }
+                  className="w-full rounded-xl border border-zinc-600 bg-zinc-900 py-3.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Show fallback sphere
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void showRawCameraTest()}
+                  className="w-full rounded-xl border border-cyan-700 bg-cyan-950 py-3.5 text-sm font-semibold text-cyan-100"
+                >
+                  Show raw camera test
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
